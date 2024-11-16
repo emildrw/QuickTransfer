@@ -1,30 +1,43 @@
 use argparse::{ArgumentParser, Store, StoreTrue};
 
-#[derive(Debug)]
-struct ProgramOptions {
-    server: bool,
-    server_ip_address: String,
-}
+mod server;
+mod client;
+mod common;
+
+use common::{ProgramOptions, ProgramRole, DEFAULT_PORT};
 
 fn parse_arguments() -> Option<ProgramOptions> {
-    let mut server = false;
+    let mut role_server = false;
     let mut server_ip_address = String::new();
+    let mut port: u16 = DEFAULT_PORT;
 
     let parsing_result: Result<(), i32>;
 
     {
         let mut argument_parser = ArgumentParser::new();
         argument_parser.set_description("QuickTransfer lets you send and download files from any computer quickly.");
-        argument_parser.refer(&mut server_ip_address).add_argument("server's address", Store, "Address, to which the program should connect (IP/domain name).");
-        argument_parser.refer(&mut server).add_option(&["-s", "--server"], StoreTrue, "Run QuickTransfer in server mode");
+
+        argument_parser.refer(&mut role_server).add_option(&["-s", "--server"], StoreTrue, "Run QuickTransfer in server mode");
+        argument_parser.refer(&mut server_ip_address).add_argument("server's address", Store, "In client mode: address, to which the program should connect (IP/domain name); in server mode: the interface on which the program should listen on (server defaults listens on all interfaces)");
+        argument_parser.refer(&mut port).add_option(&["-p", "--port"], Store, "In client mode: port, to which the program should connect on the server; in server mode: port, on which the program should listen on. The value should be between 0-65535. Default value: 47842");
 
         parsing_result = argument_parser.parse_args();
     }
 
+    if !role_server && server_ip_address.len() == 0 {
+        eprintln!("The server's address must be given in client mode.");
+        return None;
+    }
+
+    if server_ip_address.len() == 0 {
+        server_ip_address = String::from("::");
+    }
+
     if let Ok(_) = parsing_result {
         return Some(ProgramOptions {
-            server,
+            program_role: if role_server { ProgramRole::Server } else { ProgramRole::Client },
             server_ip_address,
+            port,
         });
     } else {
         return None;
@@ -32,13 +45,21 @@ fn parse_arguments() -> Option<ProgramOptions> {
 }
 
 fn main() {
-    let options = parse_arguments();
-
-    if let None = options {
+    let program_options = parse_arguments();
+    if let None = program_options {
         return;
     }
     
-    let options = options.unwrap();
+    let program_options = program_options.unwrap();
+    if let ProgramRole::Server = program_options.program_role {
+        if let Err(error) = server::handle_server(program_options) {
+            eprintln!("A fatal error occurred while running the program: {}", error);
+        }
+    } else {
+        //options.program_role == ProgramRole::Client
 
-    println!("{:?}", options);
+        if let Err(error) = client::handle_client(program_options) {
+            eprintln!("A fatal error occurred while running the program: {}", error);
+        }
+    }
 }
