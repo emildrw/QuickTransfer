@@ -1,6 +1,7 @@
 use std::net::TcpStream;
 
-use crate::common::{send_tcp, ProgramOptions, ProgramRole, QuickTransferError, MESSAGE_INIT};
+use crate::common::{receive_message_header, receive_tcp, send_tcp, ProgramOptions, ProgramRole, QuickTransferError};
+use crate::messages::{DirectoryPosition, MessageDirectoryContents, HEADER_NAME_LENGTH, MESSAGE_INIT, MESSAGE_INIT_OK};
 
 pub fn handle_client(program_options: ProgramOptions) -> Result<(), QuickTransferError> {
     eprintln!("Hello from client!");
@@ -17,6 +18,8 @@ pub fn handle_client(program_options: ProgramOptions) -> Result<(), QuickTransfe
     )?;
 
     eprintln!("Client sent an INIT message!");
+
+    receive_message_header(&mut stream, MESSAGE_INIT_OK, ProgramRole::Client)?;
 
     Ok(())
 }
