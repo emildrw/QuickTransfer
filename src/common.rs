@@ -1,4 +1,4 @@
-use core::{fmt, error, str};
+use core::{fmt, str};
 use std::io::{Read, Write};
 use std::net::TcpStream;
 
@@ -123,7 +123,9 @@ pub fn receive_message_header(
     receive_tcp(stream, &mut buffer, HEADER_NAME_LENGTH, ProgramRole::Server)?;
     let header_received = str::from_utf8(&buffer);
     if header_received.is_err() {
-        return Err(QuickTransferError::new("Client has sent invalid data. Please try again."));
+        return Err(QuickTransferError::new(
+            "Client has sent invalid data. Please try again.",
+        ));
     }
     let header_received = header_received.unwrap();
     if header_received != header {

@@ -1,4 +1,4 @@
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
 // Messages headers:
 pub const HEADER_NAME_LENGTH: usize = 8;

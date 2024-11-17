@@ -1,7 +1,9 @@
 use std::net::TcpStream;
 
-use crate::common::{receive_message_header, receive_tcp, send_tcp, ProgramOptions, ProgramRole, QuickTransferError};
-use crate::messages::{DirectoryPosition, MessageDirectoryContents, HEADER_NAME_LENGTH, MESSAGE_INIT, MESSAGE_INIT_OK};
+use crate::common::{
+    receive_message_header, send_tcp, ProgramOptions, ProgramRole, QuickTransferError,
+};
+use crate::messages::{MESSAGE_INIT, MESSAGE_INIT_OK};
 
 pub fn handle_client(program_options: ProgramOptions) -> Result<(), QuickTransferError> {
     eprintln!("Hello from client!");
