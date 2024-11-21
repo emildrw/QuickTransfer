@@ -2,8 +2,11 @@ use byteorder::{ReadBytesExt, BE};
 use core::str;
 use std::io::{Cursor, Read};
 
-use crate::common::{CommunicationAgent, ProgramRole, QuickTransferError};
-use crate::messages::{MessageDirectoryContents, HEADER_NAME_LENGTH, MESSAGE_LENGTH_LENGTH};
+use crate::common::messages::{
+    MessageDirectoryContents, HEADER_NAME_LENGTH, MESSAGE_LENGTH_LENGTH,
+};
+
+use crate::common::{CommunicationAgent, QuickTransferError};
 
 impl CommunicationAgent<'_> {
     pub fn receive_tcp(
@@ -12,35 +15,16 @@ impl CommunicationAgent<'_> {
         bytes_no: usize,
     ) -> Result<(), QuickTransferError> {
         let mut read = |buffer: &mut [u8]| -> Result<usize, QuickTransferError> {
-            let bytes_read = self.stream.read(buffer);
-            if bytes_read.is_err() {
-                return Err(QuickTransferError::new_from_string(format!(
-                    "An error occurred while receiving a message from {}.",
-                    if let ProgramRole::Client = self.role {
-                        "server"
-                    } else {
-                        "client"
-                    }
-                )));
-            } else if let Ok(n) = bytes_read {
-                if n == 0 {
-                    return Err(QuickTransferError::new_from_string(format!(
-                        "{} interrupted the connection. Turn on QuickTransfer on {} computer again.",
-                        if let ProgramRole::Client = self.role {
-                            "Server"
-                        } else {
-                            "Client"
-                        },
-                        if let ProgramRole::Client = self.role {
-                            "server"
-                        } else {
-                            "client"
-                        }
-                    )));
-                }
+            let bytes_read = self
+                .stream
+                .read(buffer)
+                .map_err(|_| QuickTransferError::MessageReceive(self.role))?;
+
+            if bytes_read == 0 {
+                return Err(QuickTransferError::RemoteClosedConnection(self.role));
             }
 
-            Ok(bytes_read.unwrap())
+            Ok(bytes_read)
         };
 
         let mut bytes_read = 0_usize;
@@ -58,27 +42,11 @@ impl CommunicationAgent<'_> {
         let mut buffer = [0_u8; HEADER_NAME_LENGTH];
 
         self.receive_tcp(&mut buffer, HEADER_NAME_LENGTH)?;
-        let header_received = str::from_utf8(&buffer);
-        if header_received.is_err() {
-            return Err(QuickTransferError::new_from_string(format!(
-                "{} has sent invalid data. Please try again.",
-                if let ProgramRole::Server = self.role {
-                    "Client"
-                } else {
-                    "Server"
-                }
-            )));
-        }
-        let header_received = header_received.unwrap();
+        let header_received =
+            str::from_utf8(&buffer).map_err(|_| QuickTransferError::SentInvalidData(self.role))?;
+
         if header_received != header {
-            return Err(QuickTransferError::new_from_string(format!(
-                "{} has sent invalid data. Please try again.",
-                if let ProgramRole::Server = self.role {
-                    "Client"
-                } else {
-                    "Server"
-                }
-            )));
+            return Err(QuickTransferError::SentInvalidData(self.role));
         }
 
         Ok(())
@@ -89,19 +57,11 @@ impl CommunicationAgent<'_> {
 
         self.receive_tcp(&mut buffer, MESSAGE_LENGTH_LENGTH)?;
 
-        let read_number = Cursor::new(buffer.to_vec()).read_u64::<BE>();
-        if read_number.is_err() {
-            return Err(QuickTransferError::new_from_string(format!(
-                "{} has sent invalid data. Please try again.",
-                if let ProgramRole::Server = self.role {
-                    "Client"
-                } else {
-                    "Server"
-                }
-            )));
-        }
+        let read_number = Cursor::new(buffer.to_vec())
+            .read_u64::<BE>()
+            .map_err(|_| QuickTransferError::SentInvalidData(self.role))?;
 
-        Ok(read_number.unwrap())
+        Ok(read_number)
     }
 
     pub fn receive_directory_description(

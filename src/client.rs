@@ -1,8 +1,8 @@
 use colored::*;
 use std::net::TcpStream;
 
+use crate::common::messages::MESSAGE_DIR;
 use crate::common::{CommunicationAgent, ProgramOptions, ProgramRole, QuickTransferError};
-use crate::messages::MESSAGE_DIR;
 
 pub fn handle_client(program_options: ProgramOptions) -> Result<(), QuickTransferError> {
     println!(
@@ -52,18 +52,18 @@ fn connect_to_server(program_options: &ProgramOptions) -> Result<TcpStream, Quic
     let stream = TcpStream::connect((
         program_options.server_ip_address.clone(),
         program_options.port,
-    ));
-
-    if let Err(e) = stream {
-        if let Some(code) = e.raw_os_error() {
+    ))
+    .map_err(|error| {
+        if let Some(code) = error.raw_os_error() {
             if code == 111 {
-                return Err(QuickTransferError::new_from_string(format!("Couldn't connect to server \"{}\". Make sure this is a correct address and the server is running QuickTransfer on port {}.", &program_options.server_ip_address, &program_options.port)));
+                return QuickTransferError::CouldntConnectToServer {
+                    server_ip: program_options.server_ip_address.clone(),
+                    port: program_options.port,
+                };
             }
         }
-        return Err(QuickTransferError::new(
-            "An error occurred while creating a connection. Please try again.",
-        ));
-    }
+        QuickTransferError::ConnectionCreation
+    })?;
 
-    Ok(stream.unwrap())
+    Ok(stream)
 }

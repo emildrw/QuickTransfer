@@ -1,8 +1,8 @@
 use colored::*;
 use std::net::{TcpListener, TcpStream};
 
+use crate::common::messages::MESSAGE_INIT;
 use crate::common::{CommunicationAgent, ProgramOptions, ProgramRole, QuickTransferError};
-use crate::messages::MESSAGE_INIT;
 
 pub fn handle_server(program_options: ProgramOptions) -> Result<(), QuickTransferError> {
     println!(
@@ -31,9 +31,7 @@ fn create_a_listener(program_options: &ProgramOptions) -> Result<TcpListener, Qu
     ));
 
     if listener.is_err() {
-        return Err(QuickTransferError::new(
-            "An error occurred while creating a server. Please try again.",
-        ));
+        return Err(QuickTransferError::ServerCreation);
     }
     Ok(listener.unwrap())
 }

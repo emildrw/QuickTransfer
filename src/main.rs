@@ -2,7 +2,6 @@ use argparse::{ArgumentParser, Store, StoreTrue};
 
 mod client;
 mod common;
-mod messages;
 mod server;
 
 use common::{ProgramOptions, ProgramRole, DEFAULT_PORT};
