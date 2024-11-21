@@ -64,19 +64,13 @@ fn main() {
     let program_options = program_options.unwrap();
     if let ProgramRole::Server = program_options.program_role {
         if let Err(error) = server::handle_server(program_options) {
-            eprintln!(
-                "A fatal error occurred while running the program: {}",
-                error
-            );
+            eprintln!("{}", error);
         }
     } else {
         //options.program_role == ProgramRole::Client
 
         if let Err(error) = client::handle_client(program_options) {
-            eprintln!(
-                "A fatal error occurred while running the program: {}",
-                error
-            );
+            eprintln!("{}", error);
         }
     }
 }

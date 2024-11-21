@@ -1,27 +1,49 @@
+use colored::*;
 use std::net::TcpStream;
 
-use crate::common::{
-    receive_message_header, send_tcp, ProgramOptions, ProgramRole, QuickTransferError,
-};
-use crate::messages::{MESSAGE_INIT, MESSAGE_INIT_OK};
+use crate::common::{CommunicationAgent, ProgramOptions, ProgramRole, QuickTransferError};
+use crate::messages::MESSAGE_DIR;
 
 pub fn handle_client(program_options: ProgramOptions) -> Result<(), QuickTransferError> {
-    eprintln!("Hello from client!");
+    println!(
+        "Welcome to QuickTransfer!\nConnecting to server \"{}\"...",
+        program_options.server_ip_address,
+    );
 
     let mut stream = connect_to_server(&program_options)?;
+    let mut agent = CommunicationAgent::new(&mut stream, ProgramRole::Client);
 
-    eprintln!("Client connected!");
+    agent.send_init_message()?;
+    agent.receive_message_header(MESSAGE_DIR)?;
 
-    send_tcp(
-        &mut stream,
-        MESSAGE_INIT.as_bytes(),
-        true,
-        ProgramRole::Client,
-    )?;
+    let dir_description_length = agent.receive_message_length()?;
+    let dir_description = agent.receive_directory_description(dir_description_length)?;
 
-    eprintln!("Client sent an INIT message!");
-
-    receive_message_header(&mut stream, MESSAGE_INIT_OK, ProgramRole::Client)?;
+    println!(
+        "{}",
+        format!(
+            "Successfully connected to {}!",
+            program_options.server_ip_address.on_green().white()
+        )
+        .green()
+        .bold()
+    );
+    println!(
+        "{}",
+        format!(
+            "Displaying contents of {}:",
+            dir_description.location().on_magenta().white()
+        )
+        .magenta()
+    );
+    for position in dir_description.positions() {
+        if position.is_directory {
+            print!("{}", format!("{}\t", position.name).bright_blue());
+        } else {
+            print!("{}", format!("{}\t", position.name).white());
+        }
+    }
+    println!();
 
     Ok(())
 }
