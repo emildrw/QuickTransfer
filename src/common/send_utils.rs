@@ -7,6 +7,8 @@ use crate::common::messages::{
 };
 use crate::common::{CommunicationAgent, QuickTransferError};
 
+use super::messages::MESSAGE_CD;
+
 impl CommunicationAgent<'_> {
     pub fn send_tcp(&mut self, message: &[u8], flush: bool) -> Result<(), QuickTransferError> {
         let bytes_written = self
@@ -89,6 +91,23 @@ impl CommunicationAgent<'_> {
         }
 
         self.send_tcp(dir_message.as_slice(), true)?;
+
+        Ok(())
+    }
+    pub fn send_change_directory(
+        &mut self,
+        directory_name: &String,
+    ) -> Result<(), QuickTransferError> {
+        let mut cd_message = MESSAGE_CD.as_bytes().to_vec();
+
+        // We assume that usize <= u64:
+        cd_message
+            .write_u64::<BE>(directory_name.len().try_into().unwrap())
+            .map_err(|_| QuickTransferError::FatalError)?;
+
+        cd_message.extend(directory_name.as_bytes());
+
+        self.send_tcp(cd_message.as_slice(), true)?;
 
         Ok(())
     }

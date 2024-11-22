@@ -48,12 +48,18 @@ impl CommunicationAgent<'_> {
 }
 
 // Helper functions:
-fn capitalize(string: String) -> String {
-    let mut string_chars = string.chars();
-    match string_chars.next() {
-        None => string,
-        Some(first_letter) => {
-            first_letter.to_uppercase().collect::<String>() + string_chars.as_str()
+fn read_opposite_role(role: &ProgramRole, capitalize: bool) -> &'static str {
+    if let ProgramRole::Server = role {
+        if capitalize {
+            "Client"
+        } else {
+            "client"
+        }
+    } else {
+        if capitalize {
+            "Server"
+        } else {
+            "server"
         }
     }
 }
@@ -70,16 +76,16 @@ pub enum QuickTransferError {
     #[error("An error occurred while creating a connection. Please try again.")]
     ConnectionCreation,
 
-    #[error("An error occurred while sending message to {0}.")]
+    #[error("An error occurred while sending message to {}.", read_opposite_role(.0, false))]
     MessageReceive(ProgramRole),
 
-    #[error("{} closed the connection. Turn on QuickTransfer on {} computer again.", capitalize(.0.to_string()), .0)]
+    #[error("{} closed the connection. Turn on QuickTransfer on {} computer again.", read_opposite_role(.0, true), read_opposite_role(.0, false))]
     RemoteClosedConnection(ProgramRole),
 
-    #[error("{} has sent invalid data. Please try again.", capitalize(.0.to_string()))]
+    #[error("{} has sent invalid data. Please try again.", read_opposite_role(.0, true))]
     SentInvalidData(ProgramRole),
 
-    #[error("An error occurred while sending message to the {0}.")]
+    #[error("An error occurred while sending message to the {}.", read_opposite_role(.0, false))]
     ErrorWhileSendingMessage(ProgramRole),
 
     #[error("An error occurred while reading current directory contents. Make sure the program has permission to do so. It is needed for QuickTransfer to work.")]
@@ -87,4 +93,10 @@ pub enum QuickTransferError {
 
     #[error("A fatal error has occurred.")]
     FatalError,
+
+    #[error("A problem with reading from stdin has occured.")] 
+    StdinError,
+
+    #[error("A problem with writing on stdin has occured.")]
+    StdoutError,
 }
