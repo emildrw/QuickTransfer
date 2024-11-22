@@ -1,5 +1,10 @@
 use core::fmt;
-use std::net::TcpStream;
+use messages::{DirectoryPosition, MessageDirectoryContents};
+use std::{
+    fs::{self, DirEntry},
+    net::TcpStream,
+    path::Path,
+};
 use thiserror::Error;
 
 pub mod messages;
@@ -55,13 +60,55 @@ fn read_opposite_role(role: &ProgramRole, capitalize: bool) -> &'static str {
         } else {
             "client"
         }
+    } else if capitalize {
+        "Server"
     } else {
-        if capitalize {
-            "Server"
-        } else {
-            "server"
-        }
+        "server"
     }
+}
+
+pub fn directory_description(
+    directory_path: &Path,
+) -> Result<MessageDirectoryContents, QuickTransferError> {
+    let paths =
+        fs::read_dir(directory_path).map_err(|_| QuickTransferError::ReadingDirectoryContents)?;
+
+    let directory_contents: Vec<Result<DirEntry, std::io::Error>> = paths.collect();
+    if directory_contents.iter().any(|dir| dir.is_err()) {
+        return Err(QuickTransferError::ReadingDirectoryContents);
+    }
+
+    let mut error_loading_contents = false;
+
+    let directory_path_name = directory_path.to_str().unwrap();
+    let directory_contents = MessageDirectoryContents::new(
+        String::from(directory_path_name),
+        directory_contents
+            .into_iter()
+            .map(|dir| dir.unwrap().path())
+            .map(|path: std::path::PathBuf| DirectoryPosition {
+                name: String::from(
+                    path.to_str()
+                        .unwrap_or_else(|| {
+                            error_loading_contents = true;
+                            "?"
+                        })
+                        .strip_prefix(directory_path_name)
+                        .unwrap_or_else(|| {
+                            error_loading_contents = true;
+                            "?"
+                        }),
+                ),
+                is_directory: path.is_dir(),
+            })
+            .collect(),
+    );
+
+    if error_loading_contents {
+        return Err(QuickTransferError::ReadingDirectoryContents);
+    }
+
+    Ok(directory_contents)
 }
 
 // Custom error enum:
@@ -94,7 +141,7 @@ pub enum QuickTransferError {
     #[error("A fatal error has occurred.")]
     FatalError,
 
-    #[error("A problem with reading from stdin has occured.")] 
+    #[error("A problem with reading from stdin has occured.")]
     StdinError,
 
     #[error("A problem with writing on stdin has occured.")]

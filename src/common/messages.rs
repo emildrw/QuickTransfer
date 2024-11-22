@@ -6,6 +6,7 @@ pub const MESSAGE_LENGTH_LENGTH: usize = 8;
 pub const MESSAGE_INIT: &str = "INIT____";
 pub const MESSAGE_DIR: &str = "DIR_____";
 pub const MESSAGE_CD: &str = "CD______";
+pub const MESSAGE_CDANSWER: &str = "CDANSWER";
 
 // Messages bodies:
 #[derive(Serialize, Deserialize, PartialEq, Debug)]
@@ -33,4 +34,11 @@ impl MessageDirectoryContents {
     pub fn positions(&self) -> &Vec<DirectoryPosition> {
         &self.positions
     }
+}
+
+#[derive(Serialize, Deserialize, PartialEq, Debug)]
+pub enum CdAnswer {
+    DirectoryDoesNotExist,
+    IllegalDirectory,
+    Success(MessageDirectoryContents),
 }

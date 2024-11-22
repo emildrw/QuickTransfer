@@ -2,7 +2,7 @@ use colored::*;
 use std::io::{self, Write};
 use std::net::TcpStream;
 
-use crate::common::messages::MESSAGE_DIR;
+use crate::common::messages::{MESSAGE_CDANSWER, MESSAGE_DIR};
 use crate::common::{CommunicationAgent, ProgramOptions, ProgramRole, QuickTransferError};
 
 pub fn handle_client(program_options: ProgramOptions) -> Result<(), QuickTransferError> {
@@ -15,7 +15,7 @@ pub fn handle_client(program_options: ProgramOptions) -> Result<(), QuickTransfe
     let mut agent = CommunicationAgent::new(&mut stream, ProgramRole::Client);
 
     agent.send_init_message()?;
-    agent.receive_message_header(MESSAGE_DIR)?;
+    agent.receive_message_header_check(MESSAGE_DIR)?;
 
     println!(
         "{}",
@@ -28,44 +28,55 @@ pub fn handle_client(program_options: ProgramOptions) -> Result<(), QuickTransfe
     );
 
     receive_and_read_directory_contents(&mut agent)?;
-    
+
     loop {
-        print!("QT > ");
-        io::stdout().flush().map_err(|_| QuickTransferError::StdoutError)?;
-    
+        print!("QT> ");
+        io::stdout()
+            .flush()
+            .map_err(|_| QuickTransferError::StdoutError)?;
+
         let mut input = String::new();
         io::stdin()
             .read_line(&mut input)
             .map_err(|_| QuickTransferError::StdinError)?;
         let input = input.trim();
         let command = input.split_whitespace().next();
-    
+
         match command {
             Some("cd") => {
                 let invalid_error_message: &str = "`directory_name` should be either the name of a directory in current view, \".\" or \"..\".";
-    
+
                 let directory_name = input.split_once(char::is_whitespace);
                 if directory_name.is_none() {
-                    println!("{}", format!("Usage: `cd <directory_name>`. {}", invalid_error_message).red());
+                    println!(
+                        "{}",
+                        format!("Usage: `cd <directory_name>`. {}", invalid_error_message).red()
+                    );
                     continue;
                 }
-    
+
                 let directory_name = String::from(directory_name.unwrap().1);
-                
+
                 if directory_name.is_empty() {
-                    println!("{}", format!("Note: `directory_name` cannot be empty. {}", invalid_error_message).red());
-                    continue;
-                } 
-                if directory_name.contains('/') {
-                    println!("{}", format!("Note: `directory_name` cannot be a path. {}", invalid_error_message).red());
+                    println!(
+                        "{}",
+                        format!(
+                            "Note: `directory_name` cannot be empty. {}",
+                            invalid_error_message
+                        )
+                        .red()
+                    );
                     continue;
                 }
 
                 agent.send_change_directory(&directory_name)?;
-            },
-            Some("help") => {
-    
+                agent.receive_message_header_check(MESSAGE_CDANSWER)?;
+
+                let cd_answer = agent.receive_cd_answer()?;
+
+                println!("{:?}", cd_answer);
             }
+            Some("help") => {}
             Some(&_) => {
                 break;
             }
@@ -96,9 +107,10 @@ fn connect_to_server(program_options: &ProgramOptions) -> Result<TcpStream, Quic
     Ok(stream)
 }
 
-fn receive_and_read_directory_contents(agent: &mut CommunicationAgent) -> Result<(), QuickTransferError> {
-    let dir_description_length = agent.receive_message_length()?;
-    let dir_description = agent.receive_directory_description(dir_description_length)?;
+fn receive_and_read_directory_contents(
+    agent: &mut CommunicationAgent,
+) -> Result<(), QuickTransferError> {
+    let dir_description = agent.receive_directory_description()?;
 
     println!(
         "{}",
