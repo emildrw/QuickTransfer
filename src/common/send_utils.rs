@@ -6,10 +6,10 @@ use crate::common::messages::{MESSAGE_DIR, MESSAGE_INIT};
 use crate::common::{CommunicationAgent, QuickTransferError};
 
 use super::directory_description;
-use super::messages::{CdAnswer, MESSAGE_CD, MESSAGE_CDANSWER};
+use super::messages::{CdAnswer, MESSAGE_CD, MESSAGE_CDANSWER, MESSAGE_LS};
 
 impl CommunicationAgent<'_> {
-    pub fn send_tcp(&mut self, message: &[u8], flush: bool) -> Result<(), QuickTransferError> {
+    fn send_tcp(&mut self, message: &[u8], flush: bool) -> Result<(), QuickTransferError> {
         let bytes_written = self
             .stream
             .write(message)
@@ -88,6 +88,12 @@ impl CommunicationAgent<'_> {
         cdanswer_message.extend(answer);
 
         self.send_tcp(cdanswer_message.as_slice(), true)?;
+
+        Ok(())
+    }
+
+    pub fn send_list_directory(&mut self) -> Result<(), QuickTransferError> {
+        self.send_tcp(MESSAGE_LS.as_bytes(), true)?;
 
         Ok(())
     }

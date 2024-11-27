@@ -7,6 +7,7 @@ pub const MESSAGE_INIT: &str = "INIT____";
 pub const MESSAGE_DIR: &str = "DIR_____";
 pub const MESSAGE_CD: &str = "CD______";
 pub const MESSAGE_CDANSWER: &str = "CDANSWER";
+pub const MESSAGE_LS: &str = "LS______";
 
 // Messages bodies:
 #[derive(Serialize, Deserialize, PartialEq, Debug)]

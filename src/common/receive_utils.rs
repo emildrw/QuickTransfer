@@ -11,7 +11,7 @@ use crate::common::{CommunicationAgent, QuickTransferError};
 use super::messages::CdAnswer;
 
 impl CommunicationAgent<'_> {
-    pub fn receive_tcp(&mut self, message_buffer: &mut [u8]) -> Result<(), QuickTransferError> {
+    fn receive_tcp(&mut self, message_buffer: &mut [u8]) -> Result<(), QuickTransferError> {
         self.stream.read_exact(message_buffer).map_err(|err| {
             if let ErrorKind::UnexpectedEof = err.kind() {
                 return QuickTransferError::RemoteClosedConnection(self.role);

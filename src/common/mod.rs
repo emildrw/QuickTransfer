@@ -70,9 +70,13 @@ fn read_opposite_role(role: &ProgramRole, capitalize: bool) -> &'static str {
 pub fn directory_description(
     directory_path: &Path,
 ) -> Result<MessageDirectoryContents, QuickTransferError> {
-    let paths =
-        fs::read_dir(directory_path).map_err(|_| QuickTransferError::ReadingDirectoryContents)?;
+    let path = if directory_path.to_str().unwrap().is_empty() {
+        Path::new("./")
+    } else {
+        directory_path
+    };
 
+    let paths = fs::read_dir(path).map_err(|_| QuickTransferError::ReadingDirectoryContents)?;
     let directory_contents: Vec<Result<DirEntry, std::io::Error>> = paths.collect();
     if directory_contents.iter().any(|dir| dir.is_err()) {
         return Err(QuickTransferError::ReadingDirectoryContents);
@@ -80,9 +84,9 @@ pub fn directory_description(
 
     let mut error_loading_contents = false;
 
-    let directory_path_name = directory_path.to_str().unwrap();
+    let directory_path_name = String::from("./") + directory_path.to_str().unwrap();
     let directory_contents = MessageDirectoryContents::new(
-        String::from(directory_path_name),
+        directory_path_name,
         directory_contents
             .into_iter()
             .map(|dir| dir.unwrap().path())
@@ -93,7 +97,7 @@ pub fn directory_description(
                             error_loading_contents = true;
                             "?"
                         })
-                        .strip_prefix(directory_path_name)
+                        .strip_prefix(directory_path.to_str().unwrap())
                         .unwrap_or_else(|| {
                             error_loading_contents = true;
                             "?"

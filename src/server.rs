@@ -3,7 +3,7 @@ use std::fs;
 use std::net::{TcpListener, TcpStream};
 use std::path::PathBuf;
 
-use crate::common::messages::{CdAnswer, MESSAGE_CD, MESSAGE_INIT};
+use crate::common::messages::{CdAnswer, MESSAGE_CD, MESSAGE_INIT, MESSAGE_LS};
 use crate::common::{
     directory_description, CommunicationAgent, ProgramOptions, ProgramRole, QuickTransferError,
 };
@@ -50,10 +50,16 @@ fn handle_client_as_a_server(mut stream: TcpStream) -> Result<(), QuickTransferE
     agent.receive_message_header_check(MESSAGE_INIT)?;
 
     let mut current_path = PathBuf::new();
-    current_path.push(".");
-    let root_directory = fs::canonicalize(current_path.as_path()).unwrap();
-    println!("Root: {}", root_directory.as_path().to_str().unwrap());
-    agent.send_directory_description(current_path.as_path())?;
+    current_path.push("./");
+    current_path = current_path.canonicalize().unwrap();
+    let root_directory = current_path.as_path().canonicalize().unwrap();
+
+    agent.send_directory_description(
+        current_path
+            .as_path()
+            .strip_prefix(root_directory.as_path())
+            .unwrap(),
+    )?;
 
     println!(
         "{}",
@@ -90,9 +96,23 @@ fn handle_client_as_a_server(mut stream: TcpStream) -> Result<(), QuickTransferE
                     continue;
                 }
 
-                current_path = next_path;
-                let directory_contents = directory_description(current_path.as_path())?;
+                current_path = current;
+
+                let directory_contents = directory_description(
+                    current_path
+                        .as_path()
+                        .strip_prefix(root_directory.as_path())
+                        .unwrap(),
+                )?;
                 agent.send_cd_answer(&CdAnswer::Success(directory_contents))?;
+            }
+            MESSAGE_LS => {
+                agent.send_directory_description(
+                    current_path
+                        .as_path()
+                        .strip_prefix(root_directory.as_path())
+                        .unwrap(),
+                )?;
             }
             _ => {}
         }

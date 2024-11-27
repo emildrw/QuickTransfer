@@ -2,7 +2,7 @@ use colored::*;
 use std::io::{self, Write};
 use std::net::TcpStream;
 
-use crate::common::messages::{MESSAGE_CDANSWER, MESSAGE_DIR};
+use crate::common::messages::{CdAnswer, MessageDirectoryContents, MESSAGE_CDANSWER, MESSAGE_DIR};
 use crate::common::{CommunicationAgent, ProgramOptions, ProgramRole, QuickTransferError};
 
 pub fn handle_client(program_options: ProgramOptions) -> Result<(), QuickTransferError> {
@@ -27,10 +27,11 @@ pub fn handle_client(program_options: ProgramOptions) -> Result<(), QuickTransfe
         .bold()
     );
 
-    receive_and_read_directory_contents(&mut agent)?;
+    let dir_description = agent.receive_directory_description()?;
+    print_directory_contents(&dir_description);
 
     loop {
-        print!("QT> ");
+        print!("QuickTransfer> ");
         io::stdout()
             .flush()
             .map_err(|_| QuickTransferError::StdoutError)?;
@@ -73,8 +74,33 @@ pub fn handle_client(program_options: ProgramOptions) -> Result<(), QuickTransfe
                 agent.receive_message_header_check(MESSAGE_CDANSWER)?;
 
                 let cd_answer = agent.receive_cd_answer()?;
-
-                println!("{:?}", cd_answer);
+                match cd_answer {
+                    CdAnswer::DirectoryDoesNotExist => {
+                        println!(
+                            "{}",
+                            format!("Error: Directory `{}` does not exist!`", directory_name).red()
+                        );
+                    }
+                    CdAnswer::IllegalDirectory => {
+                        println!(
+                            "{}",
+                            format!(
+                                "Error: You don't have access to directory `{}`!",
+                                directory_name
+                            )
+                            .red()
+                        );
+                    }
+                    CdAnswer::Success(dir_description) => {
+                        print_directory_contents(&dir_description);
+                    }
+                }
+            }
+            Some("ls") => {
+                agent.send_list_directory()?;
+                agent.receive_message_header_check(MESSAGE_DIR)?;
+                let dir_description = agent.receive_directory_description()?;
+                print_directory_contents(&dir_description);
             }
             Some("help") => {}
             Some(&_) => {
@@ -107,11 +133,7 @@ fn connect_to_server(program_options: &ProgramOptions) -> Result<TcpStream, Quic
     Ok(stream)
 }
 
-fn receive_and_read_directory_contents(
-    agent: &mut CommunicationAgent,
-) -> Result<(), QuickTransferError> {
-    let dir_description = agent.receive_directory_description()?;
-
+fn print_directory_contents(dir_description: &MessageDirectoryContents) {
     println!(
         "{}",
         format!(
@@ -127,7 +149,8 @@ fn receive_and_read_directory_contents(
             print!("{}", format!("{}  ", position.name).white());
         }
     }
+    if dir_description.positions().is_empty() {
+        print!("(empty)");
+    }
     println!();
-
-    Ok(())
 }
