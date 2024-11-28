@@ -90,20 +90,23 @@ pub fn directory_description(
         directory_contents
             .into_iter()
             .map(|dir| dir.unwrap().path())
-            .map(|path: std::path::PathBuf| DirectoryPosition {
-                name: String::from(
-                    path.to_str()
-                        .unwrap_or_else(|| {
-                            error_loading_contents = true;
-                            "?"
-                        })
-                        .strip_prefix(directory_path.to_str().unwrap())
-                        .unwrap_or_else(|| {
-                            error_loading_contents = true;
-                            "?"
-                        }),
-                ),
-                is_directory: path.is_dir(),
+            .map(|path: std::path::PathBuf| {
+                let file_name = path
+                    .to_str()
+                    .unwrap_or_else(|| {
+                        error_loading_contents = true;
+                        "?"
+                    })
+                    .strip_prefix(directory_path.to_str().unwrap())
+                    .unwrap_or_else(|| {
+                        error_loading_contents = true;
+                        "?"
+                    });
+
+                DirectoryPosition {
+                    name: String::from(file_name.strip_prefix("./").unwrap_or(file_name)),
+                    is_directory: path.is_dir(),
+                }
             })
             .collect(),
     );
@@ -150,4 +153,13 @@ pub enum QuickTransferError {
 
     #[error("A problem with writing on stdin has occured.")]
     StdoutError,
+
+    #[error("A problem with opening file `{file_path}` has occured.")]
+    ProblemOpeningFile { file_path: String },
+
+    #[error("A problem with reading file `{file_path}` has occured.")]
+    ProblemReadingFile { file_path: String },
+
+    #[error("A problem with writing file `{file_path}` has occured.")]
+    ProblemWritingFile { file_path: String },
 }

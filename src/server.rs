@@ -1,16 +1,18 @@
 use colored::*;
-use std::fs;
+use std::fs::{self, File};
 use std::net::{TcpListener, TcpStream};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
-use crate::common::messages::{CdAnswer, MESSAGE_CD, MESSAGE_INIT, MESSAGE_LS};
+use crate::common::messages::{
+    CdAnswer, FileFail, MESSAGE_CD, MESSAGE_DOWNLOAD, MESSAGE_INIT, MESSAGE_LS, MESSAGE_UPLOAD,
+};
 use crate::common::{
     directory_description, CommunicationAgent, ProgramOptions, ProgramRole, QuickTransferError,
 };
 
 pub fn handle_server(program_options: ProgramOptions) -> Result<(), QuickTransferError> {
     println!(
-        "Welcome to QuickTransfer!\nWaiting for clients to connect on port {}...",
+        "Welcome to QuickTransfer!\nTo exit, type `exit`.\nWaiting for clients to connect on port {}...",
         program_options.port,
     );
 
@@ -81,11 +83,10 @@ fn handle_client_as_a_server(mut stream: TcpStream) -> Result<(), QuickTransferE
         match header_received.as_str() {
             MESSAGE_CD => {
                 let dir_name = agent.receive_cd_message()?;
-
                 let mut next_path = current_path.to_path_buf();
                 next_path.push(dir_name);
 
-                if !fs::exists(next_path.as_path()).unwrap() {
+                if !fs::exists(next_path.as_path()).unwrap() || !next_path.as_path().is_dir() {
                     agent.send_cd_answer(&CdAnswer::DirectoryDoesNotExist)?;
                     continue;
                 }
@@ -113,6 +114,54 @@ fn handle_client_as_a_server(mut stream: TcpStream) -> Result<(), QuickTransferE
                         .strip_prefix(root_directory.as_path())
                         .unwrap(),
                 )?;
+            }
+            MESSAGE_DOWNLOAD => {
+                let file_name = agent.receive_length_with_string()?;
+                let mut file_path = current_path.to_path_buf();
+                file_path.push(file_name);
+
+                if !fs::exists(file_path.as_path()).unwrap() || !file_path.as_path().is_file() {
+                    agent.send_download_fail(&FileFail::FileDoesNotExist)?;
+                    continue;
+                }
+
+                let current = file_path.canonicalize().unwrap();
+                if !current.starts_with(root_directory.clone()) {
+                    agent.send_download_fail(&FileFail::IllegalFile)?;
+                    continue;
+                }
+
+                let opened_file =
+                    File::open(&file_path).map_err(|_| QuickTransferError::ProblemOpeningFile {
+                        file_path: String::from(file_path.to_str().unwrap()),
+                    })?;
+
+                let file_size = opened_file.metadata().unwrap().len();
+                agent.send_download_success(file_size)?;
+
+                agent.send_file(opened_file, file_size, &file_path)?;
+            }
+            MESSAGE_UPLOAD => {
+                let file_name = agent.receive_length_with_string()?;
+                let file_size = agent.receive_message_length()?;
+                let mut file_path = current_path.to_path_buf();
+                file_path.push(&file_name);
+
+                let file_name_truncated = file_name.split("/").last().unwrap_or(&file_name);
+
+                let file_path = Path::new(file_name_truncated);
+                let opened_file = File::create(file_name_truncated);
+
+                let mut fail = false;
+                if opened_file.is_err() {
+                    fail = true;
+                    agent.send_upload_fail(FileFail::ErrorCreatingFile)?;
+                }
+
+                agent.receive_file(opened_file.unwrap(), file_size, file_path, !fail)?;
+                if !fail {
+                    agent.send_upload_success()?;
+                }
             }
             _ => {}
         }
