@@ -39,6 +39,7 @@ pub struct ProgramOptions {
     pub program_role: ProgramRole,
     pub server_ip_address: String,
     pub port: u16,
+    pub root_directory: String,
 }
 
 pub struct CommunicationAgent<'a> {
@@ -69,14 +70,15 @@ fn read_opposite_role(role: &ProgramRole, capitalize: bool) -> &'static str {
 
 pub fn directory_description(
     directory_path: &Path,
+    root_directory_path: &Path,
 ) -> Result<MessageDirectoryContents, QuickTransferError> {
-    let path = if directory_path.to_str().unwrap().is_empty() {
-        Path::new("./")
-    } else {
-        directory_path
-    };
+    let mut path_displayed = String::from(directory_path.to_str().unwrap().strip_prefix(root_directory_path.to_str().unwrap()).unwrap());
+    if root_directory_path.starts_with("/") {
+        path_displayed.insert_str(0, "/");
+    }
+    path_displayed.insert_str(0, ".");
 
-    let paths = fs::read_dir(path).map_err(|_| QuickTransferError::ReadingDirectoryContents)?;
+    let paths = fs::read_dir(directory_path).map_err(|_| QuickTransferError::ReadingDirectoryContents)?;
     let directory_contents: Vec<Result<DirEntry, std::io::Error>> = paths.collect();
     if directory_contents.iter().any(|dir| dir.is_err()) {
         return Err(QuickTransferError::ReadingDirectoryContents);
@@ -84,14 +86,14 @@ pub fn directory_description(
 
     let mut error_loading_contents = false;
 
-    let directory_path_name = String::from("./") + directory_path.to_str().unwrap();
+    let directory_path_name = String::from(path_displayed);
     let directory_contents = MessageDirectoryContents::new(
         directory_path_name,
         directory_contents
             .into_iter()
             .map(|dir| dir.unwrap().path())
             .map(|path: std::path::PathBuf| {
-                let file_name = path
+                let mut file_name = path
                     .to_str()
                     .unwrap_or_else(|| {
                         error_loading_contents = true;
@@ -102,6 +104,10 @@ pub fn directory_description(
                         error_loading_contents = true;
                         "?"
                     });
+
+                if file_name.starts_with("/") {
+                    file_name = file_name.strip_prefix("/").unwrap();
+                }
 
                 DirectoryPosition {
                     name: String::from(file_name.strip_prefix("./").unwrap_or(file_name)),
@@ -142,7 +148,7 @@ pub enum QuickTransferError {
     #[error("An error occurred while sending message to the {}.", read_opposite_role(.0, false))]
     ErrorWhileSendingMessage(ProgramRole),
 
-    #[error("An error occurred while reading current directory contents. Make sure the program has permission to do so. It is needed for QuickTransfer to work.")]
+    #[error("An error occurred while reading current directory contents. Make sure the program has permissions to do so. It is needed for QuickTransfer to work.")]
     ReadingDirectoryContents,
 
     #[error("A fatal error has occurred.")]
@@ -151,8 +157,8 @@ pub enum QuickTransferError {
     #[error("A problem with reading from stdin has occured.")]
     StdinError,
 
-    #[error("A problem with writing on stdin has occured.")]
-    StdoutError,
+    #[error("A problem with reading user's input: {error}")]
+    ReadLineError { error: String },
 
     #[error("A problem with opening file `{file_path}` has occured.")]
     ProblemOpeningFile { file_path: String },

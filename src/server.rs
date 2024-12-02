@@ -4,7 +4,7 @@ use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 
 use crate::common::messages::{
-    CdAnswer, FileFail, MESSAGE_CD, MESSAGE_DOWNLOAD, MESSAGE_INIT, MESSAGE_LS, MESSAGE_UPLOAD,
+    CdAnswer, FileFail, MESSAGE_CD, MESSAGE_DISCONNECT, MESSAGE_DOWNLOAD, MESSAGE_INIT, MESSAGE_LS, MESSAGE_UPLOAD
 };
 use crate::common::{
     directory_description, CommunicationAgent, ProgramOptions, ProgramRole, QuickTransferError,
@@ -27,7 +27,7 @@ pub fn handle_server(program_options: ProgramOptions) -> Result<(), QuickTransfe
     //     break;
     // }
     let stream = listener.incoming().next().unwrap();
-    handle_client_as_a_server(stream.unwrap())?;
+    handle_client_as_a_server(stream.unwrap(), &program_options)?;
 
     Ok(())
 }
@@ -44,7 +44,7 @@ fn create_a_listener(program_options: &ProgramOptions) -> Result<TcpListener, Qu
     Ok(listener.unwrap())
 }
 
-fn handle_client_as_a_server(mut stream: TcpStream) -> Result<(), QuickTransferError> {
+fn handle_client_as_a_server(mut stream: TcpStream, program_options: &ProgramOptions) -> Result<(), QuickTransferError> {
     // The documentation doesn't say, when this functions returns an error, so let's assume that never:
     let client_address = stream.peer_addr().unwrap();
     let mut agent = CommunicationAgent::new(&mut stream, ProgramRole::Server);
@@ -52,27 +52,22 @@ fn handle_client_as_a_server(mut stream: TcpStream) -> Result<(), QuickTransferE
     agent.receive_message_header_check(MESSAGE_INIT)?;
 
     let mut current_path = PathBuf::new();
-    current_path.push("./");
+    current_path.push(&program_options.root_directory);
     current_path = current_path.canonicalize().unwrap();
     let root_directory = current_path.as_path().canonicalize().unwrap();
 
-    agent.send_directory_description(
-        current_path
-            .as_path()
-            .strip_prefix(root_directory.as_path())
-            .unwrap(),
-    )?;
+    agent.send_directory_description(&current_path, &root_directory)?;
+
+    let client_name = client_address
+        .ip()
+        .to_canonical()
+        .to_string();
 
     println!(
         "{}",
         format!(
             "A new client ({}) has connected!",
-            client_address
-                .ip()
-                .to_canonical()
-                .to_string()
-                .on_green()
-                .white()
+            client_name.on_green().white()
         )
         .green()
         .bold()
@@ -99,21 +94,11 @@ fn handle_client_as_a_server(mut stream: TcpStream) -> Result<(), QuickTransferE
 
                 current_path = current;
 
-                let directory_contents = directory_description(
-                    current_path
-                        .as_path()
-                        .strip_prefix(root_directory.as_path())
-                        .unwrap(),
-                )?;
+                let directory_contents = directory_description(&current_path, &root_directory)?;
                 agent.send_cd_answer(&CdAnswer::Success(directory_contents))?;
             }
             MESSAGE_LS => {
-                agent.send_directory_description(
-                    current_path
-                        .as_path()
-                        .strip_prefix(root_directory.as_path())
-                        .unwrap(),
-                )?;
+                agent.send_directory_description(&current_path, &root_directory)?;
             }
             MESSAGE_DOWNLOAD => {
                 let file_name = agent.receive_length_with_string()?;
@@ -163,9 +148,27 @@ fn handle_client_as_a_server(mut stream: TcpStream) -> Result<(), QuickTransferE
                     agent.send_upload_success()?;
                 }
             }
-            _ => {}
+            MESSAGE_DISCONNECT => {
+                println!(
+                    "{}",
+                    format!(
+                        "Client ({}) has disconnected.",
+                        client_name.on_green().white()
+                    )
+                    .green()
+                    .bold()
+                );
+                break;
+            }
+            _ => {
+                println!(
+                    "{}",
+                    format!("Client `{}` sent an invalid message. Disconnecting...", client_name).red()
+                );
+                break;
+            }
         }
     }
 
-    // Ok(())
+    Ok(())
 }

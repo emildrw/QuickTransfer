@@ -11,6 +11,7 @@ pub const MESSAGE_DOWNLOAD_FAIL: &str = "DOWNFAIL";
 pub const MESSAGE_DOWNLOAD_SUCCESS: &str = "DOWNSUCC";
 pub const MESSAGE_UPLOAD: &str = "UPLOAD__";
 pub const MESSAGE_UPLOAD_RESULT: &str = "UPLOADRE";
+pub const MESSAGE_DISCONNECT: &str = "DISCONN_";
 
 // Constans:
 pub const HEADER_NAME_LENGTH: usize = 8;

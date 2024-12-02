@@ -1,16 +1,15 @@
 use colored::*;
+use rustyline::{error::ReadlineError, DefaultEditor, history::History};
 use std::fs::{self, File};
-use std::io::{self, Write};
 use std::net::TcpStream;
 use std::path::Path;
 
 use crate::common::messages::{
-    CdAnswer, FileFail, MessageDirectoryContents, UploadResult, MESSAGE_CDANSWER, MESSAGE_DIR,
-    MESSAGE_DOWNLOAD_FAIL, MESSAGE_DOWNLOAD_SUCCESS, MESSAGE_UPLOAD_RESULT,
+    CdAnswer, FileFail, MessageDirectoryContents, UploadResult, MESSAGE_CDANSWER, MESSAGE_DIR, MESSAGE_DOWNLOAD_FAIL, MESSAGE_DOWNLOAD_SUCCESS, MESSAGE_UPLOAD_RESULT
 };
 use crate::common::{CommunicationAgent, ProgramOptions, ProgramRole, QuickTransferError};
 
-pub fn handle_client(program_options: ProgramOptions) -> Result<(), QuickTransferError> {
+pub fn handle_client(program_options: &ProgramOptions) -> Result<(), QuickTransferError> {
     println!(
         "Welcome to QuickTransfer!\nFor help, type `help`.\nConnecting to server \"{}\"...",
         program_options.server_ip_address,
@@ -35,18 +34,30 @@ pub fn handle_client(program_options: ProgramOptions) -> Result<(), QuickTransfe
     let dir_description = agent.receive_directory_description()?;
     print_directory_contents(&dir_description);
 
+    let mut rl = DefaultEditor::new().map_err(|_| QuickTransferError::StdinError)?;
     loop {
-        print!("QuickTransfer> ");
-        io::stdout()
-            .flush()
-            .map_err(|_| QuickTransferError::StdoutError)?;
+        let readline = rl.readline("QuickTransfer> ");
+        match readline {
+            Ok(ref line) => {
+                rl.history_mut().add(line).map_err(|err| QuickTransferError::ReadLineError { error: err.to_string() })?;
+            }
+            Err(ReadlineError::Interrupted) => {
+                eprintln!("^C");
+                return Ok(())
+            }
+            Err(ReadlineError::Eof) => {
+                eprintln!("^D");
+                return Ok(())
+            }
+            Err(err) => {
+                return Err(QuickTransferError::ReadLineError { error: err.to_string() });
+            }
+        }
 
-        let mut input = String::new();
-        io::stdin()
-            .read_line(&mut input)
-            .map_err(|_| QuickTransferError::StdinError)?;
-        let input = input.trim();
-        let command = input.split_whitespace().next();
+        let readline = readline.unwrap();
+        let input = readline.trim();
+        let mut input_splitted = input.split_whitespace();
+        let command = input_splitted.next();
 
         let invalid_dir_name_message: &str = "`directory_name` should be either the name of a directory in current view, \".\" or \"..\".";
 
@@ -54,7 +65,7 @@ pub fn handle_client(program_options: ProgramOptions) -> Result<(), QuickTransfe
             Some("cd") => {
                 let directory_name = input.split_once(char::is_whitespace);
                 if directory_name.is_none() {
-                    println!(
+                    eprintln!(
                         "{}",
                         format!("Usage: `cd <directory_name>`. {}", invalid_dir_name_message).red()
                     );
@@ -64,10 +75,10 @@ pub fn handle_client(program_options: ProgramOptions) -> Result<(), QuickTransfe
                 let directory_name = String::from(directory_name.unwrap().1);
 
                 if directory_name.is_empty() {
-                    println!(
+                    eprintln!(
                         "{}",
                         format!(
-                            "Note: `directory_name` cannot be empty. {}",
+                            "Error: `directory_name` cannot be empty. {}",
                             invalid_dir_name_message
                         )
                         .red()
@@ -81,13 +92,13 @@ pub fn handle_client(program_options: ProgramOptions) -> Result<(), QuickTransfe
                 let cd_answer = agent.receive_cd_answer()?;
                 match cd_answer {
                     CdAnswer::DirectoryDoesNotExist => {
-                        println!(
+                        eprintln!(
                             "{}",
                             format!("Error: Directory `{}` does not exist!", directory_name).red()
                         );
                     }
                     CdAnswer::IllegalDirectory => {
-                        println!(
+                        eprintln!(
                             "{}",
                             format!(
                                 "Error: You don't have access to directory `{}`!",
@@ -102,6 +113,13 @@ pub fn handle_client(program_options: ProgramOptions) -> Result<(), QuickTransfe
                 }
             }
             Some("ls") => {
+                if input_splitted.next().is_some() {
+                    eprintln!(
+                        "{}",
+                        format!("Usage: `ls`").red()
+                    );
+                    continue;
+                }
                 agent.send_list_directory()?;
                 agent.receive_message_header_check(MESSAGE_DIR)?;
                 let dir_description = agent.receive_directory_description()?;
@@ -122,13 +140,13 @@ pub fn handle_client(program_options: ProgramOptions) -> Result<(), QuickTransfe
                         let download_fail = agent.receive_download_fail()?;
                         match download_fail {
                             FileFail::FileDoesNotExist => {
-                                println!(
+                                eprintln!(
                                     "{}",
                                     format!("Error: File `{}` does not exist!", file_name).red()
                                 );
                             }
                             FileFail::IllegalFile => {
-                                println!(
+                                eprintln!(
                                     "{}",
                                     format!(
                                         "Error: You don't have access to file `{}`!",
@@ -138,7 +156,7 @@ pub fn handle_client(program_options: ProgramOptions) -> Result<(), QuickTransfe
                                 );
                             }
                             FileFail::ErrorCreatingFile => {
-                                println!(
+                                eprintln!(
                                     "{}",
                                     format!("Error: Error creating file `{}`!", file_name).red()
                                 );
@@ -175,7 +193,7 @@ pub fn handle_client(program_options: ProgramOptions) -> Result<(), QuickTransfe
                 let file_path = Path::new(&file_name);
 
                 if !fs::exists(file_path).unwrap() || !file_path.is_file() {
-                    println!(
+                    eprintln!(
                         "{}",
                         format!("Error: File `{}` does not exist!", file_name).red()
                     );
@@ -209,11 +227,40 @@ pub fn handle_client(program_options: ProgramOptions) -> Result<(), QuickTransfe
                     }
                 }
             }
-            Some("help") => {}
-            Some(&_) => {
+            Some("exit") | Some("disconnect") | Some("quit") => {
+                agent.send_disconnect_message()?;
                 break;
             }
-            None => todo!(),
+            Some("help") => {
+                print!("Available commands:\n");
+                print!("  cd <directory_name>            Change directory to `directory_name`\n");
+                print!("                                 (can be a path, including `..`; note:\n");
+                print!("                                 you cannot go higher that the root\n");
+                print!("                                 folder in which the server is being run).\n");
+                
+                print!("  ls                             Display current directory contents.\n");
+
+                print!("  download <file_path>           Download the file from `file_path`\n");
+                print!("                                 (relative to current view) to current\n");
+                print!("                                 directory (i.e. on which QuickTransfer\n");
+                print!("                                 has been run). If the file exists, it\n");
+                print!("                                 will be overwritten.\n");
+
+                print!("  upload <file_path>             Upload the file from `file_path` (relative\n");
+                print!("                                 to current directory, i.e. on which\n");
+                print!("                                 QuickTransfer has been run) to directory\n");
+                print!("                                 in current view (overrides files). If\n");
+                print!("                                 the file exists, it will be overwritten.\n");
+
+                println!("  exit; disconnect; quit         Gracefully disconnect and exit QuickTransfer.\n")
+            }
+            Some(command) => {
+                eprintln!(
+                    "{}",
+                    format!("Error: Command `{}` does not exist!", command).red()
+                );
+            }
+            None => {}
         }
     }
 
@@ -264,14 +311,14 @@ fn print_directory_contents(dir_description: &MessageDirectoryContents) {
 
 fn parse_file_name(input: &str, command: &str) -> Option<String> {
     let invalid_file_name_message: &'static str =
-        "`file_name` should be either the name of a file in current view, \".\" or \"..\".";
+        "`file_path` should be either the path of a file relative to current view.";
 
     let file_name = input.split_once(char::is_whitespace);
     if file_name.is_none() {
         println!(
             "{}",
             format!(
-                "Usage: `{} <file_name>`. {}",
+                "Usage: `{} <file_path>`. {}",
                 command, invalid_file_name_message
             )
             .red()

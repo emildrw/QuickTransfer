@@ -14,6 +14,7 @@ All messages' headers start with 8 bytes -- an id of the message.
 - "DOWNLOAD_SUCCESS": |8B: `DOWN_SUCC`|8B: (length of the file)|?B: (file content)| -- sent by server
 - "UPLOAD": |8B: `UPLOAD__`|8B: (length of file name)|?B: (file name)|8B: (length of the file)|?B: (file content)| -- sent by client
 - "UPLOAD_RESULT": |8B: `UPLOADRE`|8B: (length of the answer)|?B: (answer)| -- sent by server
+- "DISCONNECT": |8B: `DISCONN_`|
 
 ### Initialization:
 1. Client sends an init message to the server.
@@ -30,7 +31,7 @@ IMPORTANT POINTS:
 TODO:
 - Timeout? (na razie wiesza się na receive_tcp jak czeka na kolejne bajty)
 - ważne: usize <= u64 (ale raczej usize == u64)
-- możliwość wyboru innego folderu przy uruchamianiu niż aktualny
 - asynchroniczność w kliencie i wiele w serwerze
-- Zmiana nazwy pliku
-- disconnect
+- Zmiana nazwy pliku, usuwanie go
+- Szyfrowane połączenie?
+- zamykanie połączenia przez serwer

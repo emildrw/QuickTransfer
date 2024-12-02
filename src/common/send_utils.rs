@@ -8,9 +8,7 @@ use crate::common::{CommunicationAgent, QuickTransferError};
 
 use super::directory_description;
 use super::messages::{
-    CdAnswer, FileFail, UploadResult, MAX_FILE_FRAGMENT_SIZE, MESSAGE_CD, MESSAGE_CDANSWER,
-    MESSAGE_DOWNLOAD, MESSAGE_DOWNLOAD_FAIL, MESSAGE_DOWNLOAD_SUCCESS, MESSAGE_LS,
-    MESSAGE_UPLOAD_RESULT,
+    CdAnswer, FileFail, UploadResult, MAX_FILE_FRAGMENT_SIZE, MESSAGE_CD, MESSAGE_CDANSWER, MESSAGE_DISCONNECT, MESSAGE_DOWNLOAD, MESSAGE_DOWNLOAD_FAIL, MESSAGE_DOWNLOAD_SUCCESS, MESSAGE_LS, MESSAGE_UPLOAD_RESULT
 };
 
 impl CommunicationAgent<'_> {
@@ -41,8 +39,9 @@ impl CommunicationAgent<'_> {
     pub fn send_directory_description(
         &mut self,
         directory_path: &Path,
+        root_directory_path: &Path,
     ) -> Result<(), QuickTransferError> {
-        let directory_contents = directory_description(directory_path)?;
+        let directory_contents = directory_description(directory_path, root_directory_path)?;
 
         let mut dir_message = MESSAGE_DIR.as_bytes().to_vec();
 
@@ -240,6 +239,11 @@ impl CommunicationAgent<'_> {
         upload_success.extend(answer);
 
         self.send_tcp(upload_success.as_slice(), true)?;
+
+        Ok(())
+    }
+    pub fn send_disconnect_message(&mut self) -> Result<(), QuickTransferError> {
+        self.send_tcp(MESSAGE_DISCONNECT.as_bytes(), true)?;
 
         Ok(())
     }
