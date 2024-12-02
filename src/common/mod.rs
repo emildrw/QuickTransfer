@@ -72,13 +72,20 @@ pub fn directory_description(
     directory_path: &Path,
     root_directory_path: &Path,
 ) -> Result<MessageDirectoryContents, QuickTransferError> {
-    let mut path_displayed = String::from(directory_path.to_str().unwrap().strip_prefix(root_directory_path.to_str().unwrap()).unwrap());
+    let mut path_displayed = String::from(
+        directory_path
+            .to_str()
+            .unwrap()
+            .strip_prefix(root_directory_path.to_str().unwrap())
+            .unwrap(),
+    );
     if root_directory_path.starts_with("/") {
-        path_displayed.insert_str(0, "/");
+        path_displayed.insert(0, '/');
     }
-    path_displayed.insert_str(0, ".");
+    path_displayed.insert(0, '.');
 
-    let paths = fs::read_dir(directory_path).map_err(|_| QuickTransferError::ReadingDirectoryContents)?;
+    let paths =
+        fs::read_dir(directory_path).map_err(|_| QuickTransferError::ReadingDirectoryContents)?;
     let directory_contents: Vec<Result<DirEntry, std::io::Error>> = paths.collect();
     if directory_contents.iter().any(|dir| dir.is_err()) {
         return Err(QuickTransferError::ReadingDirectoryContents);
@@ -86,7 +93,7 @@ pub fn directory_description(
 
     let mut error_loading_contents = false;
 
-    let directory_path_name = String::from(path_displayed);
+    let directory_path_name = path_displayed;
     let directory_contents = MessageDirectoryContents::new(
         directory_path_name,
         directory_contents

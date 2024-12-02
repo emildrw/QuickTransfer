@@ -1,5 +1,5 @@
-use std::path::Path;
 use argparse::{ArgumentParser, Store, StoreTrue};
+use std::path::Path;
 
 mod client;
 mod common;

@@ -4,7 +4,8 @@ use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 
 use crate::common::messages::{
-    CdAnswer, FileFail, MESSAGE_CD, MESSAGE_DISCONNECT, MESSAGE_DOWNLOAD, MESSAGE_INIT, MESSAGE_LS, MESSAGE_UPLOAD
+    CdAnswer, FileFail, MESSAGE_CD, MESSAGE_DISCONNECT, MESSAGE_DOWNLOAD, MESSAGE_INIT, MESSAGE_LS,
+    MESSAGE_UPLOAD,
 };
 use crate::common::{
     directory_description, CommunicationAgent, ProgramOptions, ProgramRole, QuickTransferError,
@@ -41,10 +42,14 @@ fn create_a_listener(program_options: &ProgramOptions) -> Result<TcpListener, Qu
     if listener.is_err() {
         return Err(QuickTransferError::ServerCreation);
     }
+
     Ok(listener.unwrap())
 }
 
-fn handle_client_as_a_server(mut stream: TcpStream, program_options: &ProgramOptions) -> Result<(), QuickTransferError> {
+fn handle_client_as_a_server(
+    mut stream: TcpStream,
+    program_options: &ProgramOptions,
+) -> Result<(), QuickTransferError> {
     // The documentation doesn't say, when this functions returns an error, so let's assume that never:
     let client_address = stream.peer_addr().unwrap();
     let mut agent = CommunicationAgent::new(&mut stream, ProgramRole::Server);
@@ -58,10 +63,7 @@ fn handle_client_as_a_server(mut stream: TcpStream, program_options: &ProgramOpt
 
     agent.send_directory_description(&current_path, &root_directory)?;
 
-    let client_name = client_address
-        .ip()
-        .to_canonical()
-        .to_string();
+    let client_name = client_address.ip().to_canonical().to_string();
 
     println!(
         "{}",
@@ -163,7 +165,11 @@ fn handle_client_as_a_server(mut stream: TcpStream, program_options: &ProgramOpt
             _ => {
                 println!(
                     "{}",
-                    format!("Client `{}` sent an invalid message. Disconnecting...", client_name).red()
+                    format!(
+                        "Client `{}` sent an invalid message. Disconnecting...",
+                        client_name
+                    )
+                    .red()
                 );
                 break;
             }

@@ -1,11 +1,12 @@
 use colored::*;
-use rustyline::{error::ReadlineError, DefaultEditor, history::History};
+use rustyline::{error::ReadlineError, history::History, DefaultEditor};
 use std::fs::{self, File};
 use std::net::TcpStream;
 use std::path::Path;
 
 use crate::common::messages::{
-    CdAnswer, FileFail, MessageDirectoryContents, UploadResult, MESSAGE_CDANSWER, MESSAGE_DIR, MESSAGE_DOWNLOAD_FAIL, MESSAGE_DOWNLOAD_SUCCESS, MESSAGE_UPLOAD_RESULT
+    CdAnswer, FileFail, MessageDirectoryContents, UploadResult, MESSAGE_CDANSWER, MESSAGE_DIR,
+    MESSAGE_DOWNLOAD_FAIL, MESSAGE_DOWNLOAD_SUCCESS, MESSAGE_UPLOAD_RESULT,
 };
 use crate::common::{CommunicationAgent, ProgramOptions, ProgramRole, QuickTransferError};
 
@@ -15,7 +16,7 @@ pub fn handle_client(program_options: &ProgramOptions) -> Result<(), QuickTransf
         program_options.server_ip_address,
     );
 
-    let mut stream = connect_to_server(&program_options)?;
+    let mut stream = connect_to_server(program_options)?;
     let mut agent = CommunicationAgent::new(&mut stream, ProgramRole::Client);
 
     agent.send_init_message()?;
@@ -39,18 +40,24 @@ pub fn handle_client(program_options: &ProgramOptions) -> Result<(), QuickTransf
         let readline = rl.readline("QuickTransfer> ");
         match readline {
             Ok(ref line) => {
-                rl.history_mut().add(line).map_err(|err| QuickTransferError::ReadLineError { error: err.to_string() })?;
+                rl.history_mut()
+                    .add(line)
+                    .map_err(|err| QuickTransferError::ReadLineError {
+                        error: err.to_string(),
+                    })?;
             }
             Err(ReadlineError::Interrupted) => {
                 eprintln!("^C");
-                return Ok(())
+                return Ok(());
             }
             Err(ReadlineError::Eof) => {
                 eprintln!("^D");
-                return Ok(())
+                return Ok(());
             }
             Err(err) => {
-                return Err(QuickTransferError::ReadLineError { error: err.to_string() });
+                return Err(QuickTransferError::ReadLineError {
+                    error: err.to_string(),
+                });
             }
         }
 
@@ -114,10 +121,7 @@ pub fn handle_client(program_options: &ProgramOptions) -> Result<(), QuickTransf
             }
             Some("ls") => {
                 if input_splitted.next().is_some() {
-                    eprintln!(
-                        "{}",
-                        format!("Usage: `ls`").red()
-                    );
+                    eprintln!("{}", "Usage: `ls`".to_string().red());
                     continue;
                 }
                 agent.send_list_directory()?;
@@ -232,25 +236,33 @@ pub fn handle_client(program_options: &ProgramOptions) -> Result<(), QuickTransf
                 break;
             }
             Some("help") => {
-                print!("Available commands:\n");
-                print!("  cd <directory_name>            Change directory to `directory_name`\n");
-                print!("                                 (can be a path, including `..`; note:\n");
-                print!("                                 you cannot go higher that the root\n");
-                print!("                                 folder in which the server is being run).\n");
-                
-                print!("  ls                             Display current directory contents.\n");
+                println!("Available commands:");
+                println!("  cd <directory_name>            Change directory to `directory_name`");
+                println!("                                 (can be a path, including `..`; note:");
+                println!("                                 you cannot go higher that the root");
+                println!(
+                    "                                 directory in which the server is being run)."
+                );
 
-                print!("  download <file_path>           Download the file from `file_path`\n");
-                print!("                                 (relative to current view) to current\n");
-                print!("                                 directory (i.e. on which QuickTransfer\n");
-                print!("                                 has been run). If the file exists, it\n");
-                print!("                                 will be overwritten.\n");
+                println!("  ls                             Display current directory contents.");
 
-                print!("  upload <file_path>             Upload the file from `file_path` (relative\n");
-                print!("                                 to current directory, i.e. on which\n");
-                print!("                                 QuickTransfer has been run) to directory\n");
-                print!("                                 in current view (overrides files). If\n");
-                print!("                                 the file exists, it will be overwritten.\n");
+                println!("  download <file_path>           Download the file from `file_path`");
+                println!("                                 (relative to current view) to current");
+                println!("                                 directory (i.e. on which QuickTransfer");
+                println!("                                 has been run). If the file exists, it");
+                println!("                                 will be overwritten.");
+
+                println!(
+                    "  upload <file_path>             Upload the file from `file_path` (relative"
+                );
+                println!("                                 to current directory, i.e. on which");
+                println!(
+                    "                                 QuickTransfer has been run) to directory"
+                );
+                println!("                                 in current view (overrides files). If");
+                println!(
+                    "                                 the file exists, it will be overwritten."
+                );
 
                 println!("  exit; disconnect; quit         Gracefully disconnect and exit QuickTransfer.\n")
             }
