@@ -7,6 +7,7 @@ mod server;
 
 use common::{ProgramOptions, ProgramRole, DEFAULT_PORT};
 
+/// Parses program arguments.
 fn parse_arguments() -> Option<ProgramOptions> {
     let mut role_server = false;
     let mut server_ip_address = String::new();
@@ -18,7 +19,7 @@ fn parse_arguments() -> Option<ProgramOptions> {
     {
         let mut argument_parser = ArgumentParser::new();
         argument_parser.set_description(
-            "QuickTransfer lets you upload and download files from any computer quickly.",
+            "QuickTransfer allows you to quickly upload and download files from any computer.",
         );
 
         argument_parser.refer(&mut role_server).add_option(

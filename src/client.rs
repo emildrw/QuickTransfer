@@ -10,10 +10,11 @@ use crate::common::messages::{
 };
 use crate::common::{CommunicationAgent, ProgramOptions, ProgramRole, QuickTransferError};
 
+/// This functions server program run in client mode.
 pub fn handle_client(program_options: &ProgramOptions) -> Result<(), QuickTransferError> {
     println!(
-        "Welcome to QuickTransfer!\nFor help, type `help`.\nConnecting to server \"{}\"...",
-        program_options.server_ip_address,
+        "Welcome to QuickTransfer!\nFor help, type `help`.\nConnecting to server \"{}\" on port {}...",
+        program_options.server_ip_address, program_options.port
     );
 
     let mut stream = connect_to_server(program_options)?;
@@ -48,13 +49,16 @@ pub fn handle_client(program_options: &ProgramOptions) -> Result<(), QuickTransf
             }
             Err(ReadlineError::Interrupted) => {
                 eprintln!("^C");
+                agent.send_disconnect_message()?;
                 return Ok(());
             }
             Err(ReadlineError::Eof) => {
                 eprintln!("^D");
+                agent.send_disconnect_message()?;
                 return Ok(());
             }
             Err(err) => {
+                agent.send_disconnect_message()?;
                 return Err(QuickTransferError::ReadLineError {
                     error: err.to_string(),
                 });
@@ -279,6 +283,7 @@ pub fn handle_client(program_options: &ProgramOptions) -> Result<(), QuickTransf
     Ok(())
 }
 
+/// Connects client to a server.
 fn connect_to_server(program_options: &ProgramOptions) -> Result<TcpStream, QuickTransferError> {
     let stream = TcpStream::connect((
         program_options.server_ip_address.clone(),
@@ -321,6 +326,7 @@ fn print_directory_contents(dir_description: &MessageDirectoryContents) {
     println!();
 }
 
+/// Parses file name returning error, if needed.
 fn parse_file_name(input: &str, command: &str) -> Option<String> {
     let invalid_file_name_message: &'static str =
         "`file_path` should be either the path of a file relative to current view.";

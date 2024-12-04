@@ -14,6 +14,7 @@ use crate::common::{CommunicationAgent, QuickTransferError};
 use super::messages::{CdAnswer, FileFail, UploadResult, MAX_FILE_FRAGMENT_SIZE};
 
 impl CommunicationAgent<'_> {
+    /// Receives exactly this number of bytes to fill the buffer from TCP.
     fn receive_tcp(&mut self, message_buffer: &mut [u8]) -> Result<(), QuickTransferError> {
         self.stream.read_exact(message_buffer).map_err(|err| {
             if let ErrorKind::UnexpectedEof = err.kind() {
@@ -26,6 +27,7 @@ impl CommunicationAgent<'_> {
         Ok(())
     }
 
+    /// Receives a message header (takes 8 bytes).
     pub fn receive_message_header(&mut self) -> Result<String, QuickTransferError> {
         let mut buffer = [0_u8; HEADER_NAME_LENGTH];
 
@@ -36,6 +38,7 @@ impl CommunicationAgent<'_> {
         Ok(String::from(header_received))
     }
 
+    /// Receives a message header and automatically ensures it is equal to `message_header`.
     pub fn receive_message_header_check(
         &mut self,
         message_header: &str,
@@ -49,6 +52,7 @@ impl CommunicationAgent<'_> {
         }
     }
 
+    /// Receives representing length of a message (string length, answer length, file size) (takes 8 bytes).
     pub fn receive_message_length(&mut self) -> Result<u64, QuickTransferError> {
         let mut buffer = [0_u8; MESSAGE_LENGTH_LENGTH];
 
@@ -61,6 +65,7 @@ impl CommunicationAgent<'_> {
         Ok(read_number)
     }
 
+    /// Receives directory description (its size and itself).
     pub fn receive_directory_description(
         &mut self,
     ) -> Result<MessageDirectoryContents, QuickTransferError> {
@@ -73,6 +78,7 @@ impl CommunicationAgent<'_> {
         Ok(deserialized_message)
     }
 
+    /// Receives a string (reads exactly `string_length` bytes so as to receive it).
     pub fn receive_string(&mut self, string_length: u64) -> Result<String, QuickTransferError> {
         let string_length: usize = string_length.try_into().unwrap();
         let mut buffer: Vec<u8> = vec![0_u8; string_length];
@@ -83,6 +89,7 @@ impl CommunicationAgent<'_> {
         Ok(string)
     }
 
+    /// Receives a CD message (only message length and message).
     pub fn receive_cd_message(&mut self) -> Result<String, QuickTransferError> {
         let dir_name_length = self.receive_message_length()?;
         let dir_name = self.receive_string(dir_name_length)?;
@@ -90,6 +97,7 @@ impl CommunicationAgent<'_> {
         Ok(dir_name)
     }
 
+    /// Receives a CD answer message (only message length and message)
     pub fn receive_cd_answer(&mut self) -> Result<CdAnswer, QuickTransferError> {
         let answer_length: usize = self.receive_message_length()?.try_into().unwrap();
         let mut buffer: Vec<u8> = vec![0_u8; answer_length];
@@ -99,6 +107,7 @@ impl CommunicationAgent<'_> {
         Ok(deserialized_message)
     }
 
+    /// Receives a string (its length and itself).
     pub fn receive_length_with_string(&mut self) -> Result<String, QuickTransferError> {
         let file_name_length = self.receive_message_length()?;
         let file_name = self.receive_string(file_name_length)?;
@@ -106,6 +115,7 @@ impl CommunicationAgent<'_> {
         Ok(file_name)
     }
 
+    /// Receives a download fail message (only its length and message).
     pub fn receive_download_fail(&mut self) -> Result<FileFail, QuickTransferError> {
         let answer_length: usize = self.receive_message_length()?.try_into().unwrap();
         let mut buffer: Vec<u8> = vec![0_u8; answer_length];
@@ -115,6 +125,7 @@ impl CommunicationAgent<'_> {
         Ok(deserialized_message)
     }
 
+    /// Receives a file and saves it in blocks (reads `file_size` bytes).
     pub fn receive_file(
         &mut self,
         mut file: File,
@@ -153,6 +164,7 @@ impl CommunicationAgent<'_> {
         Ok(())
     }
 
+    /// Receives upload result (only its length and message).
     pub fn receive_upload_result(&mut self) -> Result<UploadResult, QuickTransferError> {
         let answer_length: usize = self.receive_message_length()?.try_into().unwrap();
         let mut buffer: Vec<u8> = vec![0_u8; answer_length];

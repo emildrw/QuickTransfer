@@ -11,28 +11,24 @@ use crate::common::{
     directory_description, CommunicationAgent, ProgramOptions, ProgramRole, QuickTransferError,
 };
 
+/// This functions server program run in server mode.
 pub fn handle_server(program_options: ProgramOptions) -> Result<(), QuickTransferError> {
     println!(
-        "Welcome to QuickTransfer!\nTo exit, type `exit`.\nWaiting for clients to connect on port {}...",
-        program_options.port,
+        // "Welcome to QuickTransfer!\nTo exit, type `exit`.\nWaiting for clients to connect on port {}...",
+        "Welcome to QuickTransfer!\nWaiting for clients to connect on port {} (interface {})...",
+        program_options.port, program_options.server_ip_address,
     );
 
     let listener = create_a_listener(&program_options)?;
 
-    // For now, the server operates one client at a time.
-    // for stream in listener.incoming() {
-    //     // The specifications says that stream will never return an error, hence the unwrap() will never panic:
-    //     handle_client_as_a_server(stream.unwrap())?;
-
-    //     // For now, operate one client and exit:
-    //     break;
-    // }
+    // For now, the server operates one client and exits.
     let stream = listener.incoming().next().unwrap();
     handle_client_as_a_server(stream.unwrap(), &program_options)?;
 
     Ok(())
 }
 
+/// Creates a TCP listener foo server.
 fn create_a_listener(program_options: &ProgramOptions) -> Result<TcpListener, QuickTransferError> {
     let listener = TcpListener::bind((
         program_options.server_ip_address.clone(),
@@ -46,6 +42,7 @@ fn create_a_listener(program_options: &ProgramOptions) -> Result<TcpListener, Qu
     Ok(listener.unwrap())
 }
 
+/// Handles a client once it is connected on some TCP stream.
 fn handle_client_as_a_server(
     mut stream: TcpStream,
     program_options: &ProgramOptions,
@@ -88,13 +85,13 @@ fn handle_client_as_a_server(
                     continue;
                 }
 
-                let current = next_path.canonicalize().unwrap();
-                if !current.starts_with(root_directory.clone()) {
+                let next_path = next_path.canonicalize().unwrap();
+                if !next_path.starts_with(root_directory.clone()) || next_path == current_path {
                     agent.send_cd_answer(&CdAnswer::IllegalDirectory)?;
                     continue;
                 }
 
-                current_path = current;
+                current_path = next_path;
 
                 let directory_contents = directory_description(&current_path, &root_directory)?;
                 agent.send_cd_answer(&CdAnswer::Success(directory_contents))?;

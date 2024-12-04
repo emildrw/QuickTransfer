@@ -14,6 +14,7 @@ use super::messages::{
 };
 
 impl CommunicationAgent<'_> {
+    /// Send bytes from message over TCP.
     fn send_tcp(&mut self, message: &[u8], flush: bool) -> Result<(), QuickTransferError> {
         self.stream.write_all(message).map_err(|err| {
             if let ErrorKind::UnexpectedEof = err.kind() {
@@ -32,12 +33,14 @@ impl CommunicationAgent<'_> {
         Ok(())
     }
 
+    /// Sends an init message (header).
     pub fn send_init_message(&mut self) -> Result<(), QuickTransferError> {
         self.send_tcp(MESSAGE_INIT.as_bytes(), true)?;
 
         Ok(())
     }
 
+    /// Sends directory description: header, description length, description.
     pub fn send_directory_description(
         &mut self,
         directory_path: &Path,
@@ -62,6 +65,7 @@ impl CommunicationAgent<'_> {
         Ok(())
     }
 
+    /// Sends change directory message: header, directory name length, directory length.
     pub fn send_change_directory(
         &mut self,
         directory_name: &str,
@@ -80,6 +84,7 @@ impl CommunicationAgent<'_> {
         Ok(())
     }
 
+    // Send a change directory answer: header, answer length, answer.
     pub fn send_cd_answer(&mut self, answer: &CdAnswer) -> Result<(), QuickTransferError> {
         let mut cdanswer_message = MESSAGE_CDANSWER.as_bytes().to_vec();
         let answer = bincode::serialize(answer).map_err(|_| QuickTransferError::FatalError)?;
@@ -96,12 +101,14 @@ impl CommunicationAgent<'_> {
         Ok(())
     }
 
+    /// Sends a `ls` message (header).
     pub fn send_list_directory(&mut self) -> Result<(), QuickTransferError> {
         self.send_tcp(MESSAGE_LS.as_bytes(), true)?;
 
         Ok(())
     }
 
+    /// Sends file download request: header, file name length, file name.
     pub fn send_download_request(&mut self, file_name: &str) -> Result<(), QuickTransferError> {
         let mut download_message = MESSAGE_DOWNLOAD.as_bytes().to_vec();
 
@@ -117,6 +124,7 @@ impl CommunicationAgent<'_> {
         Ok(())
     }
 
+    /// Sends download fail message: header, message length, message.
     pub fn send_download_fail(
         &mut self,
         download_fail: &FileFail,
@@ -137,6 +145,7 @@ impl CommunicationAgent<'_> {
         Ok(())
     }
 
+    /// Sends download success message: header, file size (in bytes) (without file contents!)
     pub fn send_download_success(&mut self, file_size: u64) -> Result<(), QuickTransferError> {
         let mut download_success_message = MESSAGE_DOWNLOAD_SUCCESS.as_bytes().to_vec();
 
@@ -150,6 +159,7 @@ impl CommunicationAgent<'_> {
         Ok(())
     }
 
+    /// Sends a file (only bytes from that file) in blocks.
     pub fn send_file(
         &mut self,
         mut file: File,
@@ -183,6 +193,7 @@ impl CommunicationAgent<'_> {
         Ok(())
     }
 
+    /// Sends an upload message: header, file size (in bytes), file contents.
     pub fn send_upload(
         &mut self,
         file: File,
@@ -211,6 +222,7 @@ impl CommunicationAgent<'_> {
         Ok(())
     }
 
+    /// Sends upload fail message: header, answer length, answer.
     pub fn send_upload_fail(&mut self, upload_fail: FileFail) -> Result<(), QuickTransferError> {
         let mut upload_fail_message = MESSAGE_UPLOAD_RESULT.as_bytes().to_vec();
         let answer = bincode::serialize(&UploadResult::Fail(upload_fail))
@@ -228,6 +240,7 @@ impl CommunicationAgent<'_> {
         Ok(())
     }
 
+    // Sends upload success message: header, answer length, answer.
     pub fn send_upload_success(&mut self) -> Result<(), QuickTransferError> {
         let mut upload_success = MESSAGE_UPLOAD_RESULT.as_bytes().to_vec();
         let answer = bincode::serialize(&UploadResult::Success)
@@ -244,6 +257,8 @@ impl CommunicationAgent<'_> {
 
         Ok(())
     }
+
+    /// Sends a disconnect message (header).
     pub fn send_disconnect_message(&mut self) -> Result<(), QuickTransferError> {
         self.send_tcp(MESSAGE_DISCONNECT.as_bytes(), true)?;
 

@@ -30,8 +30,8 @@ IMPORTANT POINTS:
 
 TODO:
 - Timeout? (na razie wiesza się na receive_tcp jak czeka na kolejne bajty)
-- ważne: usize <= u64 (ale raczej usize == u64)
 - asynchroniczność w kliencie i wiele w serwerze
 - Zmiana nazwy pliku, usuwanie go
 - Szyfrowane połączenie?
 - zamykanie połączenia przez serwer
+- tworzenie folderów

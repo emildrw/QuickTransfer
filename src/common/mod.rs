@@ -42,6 +42,7 @@ pub struct ProgramOptions {
     pub root_directory: String,
 }
 
+/// A helper providing an abstraction for sending and receiving messages.
 pub struct CommunicationAgent<'a> {
     stream: &'a mut TcpStream,
     role: ProgramRole,
@@ -54,6 +55,8 @@ impl CommunicationAgent<'_> {
 }
 
 // Helper functions:
+
+/// Receives name of the opposite side computer name.
 fn read_opposite_role(role: &ProgramRole, capitalize: bool) -> &'static str {
     if let ProgramRole::Server = role {
         if capitalize {
@@ -68,6 +71,7 @@ fn read_opposite_role(role: &ProgramRole, capitalize: bool) -> &'static str {
     }
 }
 
+/// Returns directory description that can be sent.
 pub fn directory_description(
     directory_path: &Path,
     root_directory_path: &Path,
@@ -79,7 +83,8 @@ pub fn directory_description(
             .strip_prefix(root_directory_path.to_str().unwrap())
             .unwrap(),
     );
-    if root_directory_path.starts_with("/") {
+    let root = root_directory_path.to_str().unwrap();
+    if root == "/" && !path_displayed.is_empty() {
         path_displayed.insert(0, '/');
     }
     path_displayed.insert(0, '.');
@@ -113,7 +118,11 @@ pub fn directory_description(
                     });
 
                 if file_name.starts_with("/") {
+                    // For unix paths
                     file_name = file_name.strip_prefix("/").unwrap();
+                } else if file_name.starts_with("\\") {
+                    // For Windows paths
+                    file_name = file_name.strip_prefix("\\").unwrap();
                 }
 
                 DirectoryPosition {
@@ -131,7 +140,7 @@ pub fn directory_description(
     Ok(directory_contents)
 }
 
-// Custom error enum:
+/// Custom error enum.
 #[derive(Error, Debug)]
 pub enum QuickTransferError {
     #[error("An error occurred while creating a server. Please try again.")]
@@ -161,18 +170,18 @@ pub enum QuickTransferError {
     #[error("A fatal error has occurred.")]
     FatalError,
 
-    #[error("A problem with reading from stdin has occured.")]
+    #[error("A problem with reading from stdin has occurred.")]
     StdinError,
 
     #[error("A problem with reading user's input: {error}")]
     ReadLineError { error: String },
 
-    #[error("A problem with opening file `{file_path}` has occured.")]
+    #[error("A problem with opening file `{file_path}` has occurred.")]
     ProblemOpeningFile { file_path: String },
 
-    #[error("A problem with reading file `{file_path}` has occured.")]
+    #[error("A problem with reading file `{file_path}` has occurred.")]
     ProblemReadingFile { file_path: String },
 
-    #[error("A problem with writing file `{file_path}` has occured.")]
+    #[error("A problem with writing file `{file_path}` has occurred.")]
     ProblemWritingFile { file_path: String },
 }
