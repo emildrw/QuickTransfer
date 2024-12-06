@@ -8,7 +8,7 @@ cargo build -r
 ```
 
 ## Platforms tested
-QuickTransfer has been tested on Linux (Debian) and Windows 11. However, when establishing a server on Windows 11, the interface on which the server should run, must be specified.
+QuickTransfer has been tested on Linux and Windows 11. However, when establishing a server on Windows 11, the interface on which the server should run, must be specified.
 
 ## Description
 QuickTransfer can be run either in **client** or **server** mode. In the first case, the program tries to connect to the given server (by their IP address) and upon successfully connected, it starts communicating with the server. Server listens on a given interface and once a client is connected, it handles it and exists.
