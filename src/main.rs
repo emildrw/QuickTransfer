@@ -69,12 +69,10 @@ fn parse_arguments() -> Option<ProgramOptions> {
 }
 
 fn main() {
-    let program_options = parse_arguments();
-    if program_options.is_none() {
+    let Some(program_options) = parse_arguments() else {
         return;
-    }
+    };
 
-    let program_options = program_options.unwrap();
     if let ProgramRole::Server = program_options.program_role {
         if let Err(error) = server::handle_server(program_options) {
             eprintln!("{}", error);

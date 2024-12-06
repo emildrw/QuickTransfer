@@ -22,6 +22,7 @@ pub fn handle_server(program_options: ProgramOptions) -> Result<(), QuickTransfe
     let listener = create_a_listener(&program_options)?;
 
     // For now, the server operates one client and exits.
+    // The documentation says that iterator incoming will never return none, hence we can unwrap it:
     let stream = listener.incoming().next().unwrap();
     handle_client_as_a_server(stream.unwrap(), &program_options)?;
 
@@ -35,11 +36,7 @@ fn create_a_listener(program_options: &ProgramOptions) -> Result<TcpListener, Qu
         program_options.port,
     ));
 
-    if listener.is_err() {
-        return Err(QuickTransferError::ServerCreation);
-    }
-
-    Ok(listener.unwrap())
+    listener.map_err(|_| QuickTransferError::ServerCreation)
 }
 
 /// Handles a client once it is connected on some TCP stream.

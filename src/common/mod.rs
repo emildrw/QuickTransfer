@@ -76,14 +76,10 @@ pub fn directory_description(
     directory_path: &Path,
     root_directory_path: &Path,
 ) -> Result<MessageDirectoryContents, QuickTransferError> {
-    let mut path_displayed = String::from(
-        directory_path
-            .to_str()
-            .unwrap()
-            .strip_prefix(root_directory_path.to_str().unwrap())
-            .unwrap(),
-    );
     let root = root_directory_path.to_str().unwrap();
+    let mut path_displayed =
+        String::from(directory_path.to_str().unwrap().strip_prefix(root).unwrap());
+
     if root == "/" && !path_displayed.is_empty() {
         path_displayed.insert(0, '/');
     }
@@ -119,10 +115,10 @@ pub fn directory_description(
 
                 if file_name.starts_with("/") {
                     // For unix paths
-                    file_name = file_name.strip_prefix("/").unwrap();
+                    file_name = file_name.strip_prefix("/").unwrap_or(file_name);
                 } else if file_name.starts_with("\\") {
                     // For Windows paths
-                    file_name = file_name.strip_prefix("\\").unwrap();
+                    file_name = file_name.strip_prefix("\\").unwrap_or(file_name);
                 }
 
                 DirectoryPosition {

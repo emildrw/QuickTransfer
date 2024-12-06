@@ -10,15 +10,22 @@ use crate::common::messages::{
 };
 use crate::common::{CommunicationAgent, ProgramOptions, ProgramRole, QuickTransferError};
 
-/// This functions server program run in client mode.
+// This function is a wrapper to catch errors and (try to) gracefully end a connection in all cases.
 pub fn handle_client(program_options: &ProgramOptions) -> Result<(), QuickTransferError> {
+    let mut stream = connect_to_server(program_options)?;
+    let mut agent = CommunicationAgent::new(&mut stream, ProgramRole::Client);
+    let result = serve_client(program_options, &mut agent);
+    agent.send_disconnect_message()?;
+    
+    result
+}
+
+/// This functions server program run in client mode.
+fn serve_client(program_options: &ProgramOptions, agent: &mut CommunicationAgent) -> Result<(), QuickTransferError> {
     println!(
         "Welcome to QuickTransfer!\nFor help, type `help`.\nConnecting to server \"{}\" on port {}...",
         program_options.server_ip_address, program_options.port
     );
-
-    let mut stream = connect_to_server(program_options)?;
-    let mut agent = CommunicationAgent::new(&mut stream, ProgramRole::Client);
 
     agent.send_init_message()?;
     agent.receive_message_header_check(MESSAGE_DIR)?;
@@ -49,23 +56,22 @@ pub fn handle_client(program_options: &ProgramOptions) -> Result<(), QuickTransf
             }
             Err(ReadlineError::Interrupted) => {
                 eprintln!("^C");
-                agent.send_disconnect_message()?;
                 return Ok(());
             }
             Err(ReadlineError::Eof) => {
                 eprintln!("^D");
-                agent.send_disconnect_message()?;
                 return Ok(());
             }
             Err(err) => {
-                agent.send_disconnect_message()?;
                 return Err(QuickTransferError::ReadLineError {
                     error: err.to_string(),
                 });
             }
         }
 
-        let readline = readline.unwrap();
+        let Ok(readline) = readline else {
+            return Ok(());
+        };
         let input = readline.trim();
         let mut input_splitted = input.split_whitespace();
         let command = input_splitted.next();
@@ -135,10 +141,9 @@ pub fn handle_client(program_options: &ProgramOptions) -> Result<(), QuickTransf
             }
             Some("download") => {
                 let file_name = parse_file_name(input, "download");
-                if file_name.is_none() {
+                let Some(file_name) = file_name else {
                     continue;
-                }
-                let file_name = file_name.unwrap();
+                };
 
                 agent.send_download_request(&file_name)?;
                 let header_received = agent.receive_message_header()?;
@@ -194,10 +199,9 @@ pub fn handle_client(program_options: &ProgramOptions) -> Result<(), QuickTransf
             }
             Some("upload") => {
                 let file_name = parse_file_name(input, "upload");
-                if file_name.is_none() {
+                let Some(file_name) = file_name else {
                     continue;
-                }
-                let file_name = file_name.unwrap();
+                };
                 let file_path = Path::new(&file_name);
 
                 if !fs::exists(file_path).unwrap() || !file_path.is_file() {
@@ -236,7 +240,6 @@ pub fn handle_client(program_options: &ProgramOptions) -> Result<(), QuickTransf
                 }
             }
             Some("exit") | Some("disconnect") | Some("quit") => {
-                agent.send_disconnect_message()?;
                 break;
             }
             Some("help") => {
