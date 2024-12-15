@@ -39,7 +39,7 @@ fn create_a_listener(program_options: &ProgramOptions) -> Result<TcpListener, Qu
     listener.map_err(|_| QuickTransferError::ServerCreation)
 }
 
-/// Handles a client once it is connected on some TCP stream.
+/// Handles the client once it is connected on some TCP stream.
 fn handle_client_as_a_server(
     mut stream: TcpStream,
     program_options: &ProgramOptions,
@@ -60,13 +60,10 @@ fn handle_client_as_a_server(
     let client_name = client_address.ip().to_canonical().to_string();
 
     println!(
-        "{}",
-        format!(
-            "A new client ({}) has connected!",
-            client_name.on_green().white()
-        )
-        .green()
-        .bold()
+        "{}{}{}",
+        "A new client (".green().bold(),
+        client_name.on_green().white(),
+        ") has connected!".green().bold(),
     );
 
     loop {
@@ -146,24 +143,19 @@ fn handle_client_as_a_server(
             }
             MESSAGE_DISCONNECT => {
                 println!(
-                    "{}",
-                    format!(
-                        "Client ({}) has disconnected.",
-                        client_name.on_green().white()
-                    )
-                    .green()
-                    .bold()
+                    "{}{}{}",
+                    "Client (".green().bold(),
+                    client_name.on_green().white(),
+                    ") has disconnected.".green().bold(),
                 );
                 break;
             }
             _ => {
                 println!(
-                    "{}",
-                    format!(
-                        "Client `{}` sent an invalid message. Disconnecting...",
-                        client_name
-                    )
-                    .red()
+                    "{}{}{}",
+                    "Client `".red(),
+                    client_name.red(),
+                    "` sent an invalid message. Disconnecting...".red(),
                 );
                 break;
             }

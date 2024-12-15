@@ -15,7 +15,7 @@ pub fn handle_client(program_options: &ProgramOptions) -> Result<(), QuickTransf
     let mut stream = connect_to_server(program_options)?;
     let mut agent = CommunicationAgent::new(&mut stream, ProgramRole::Client);
     let result = serve_client(program_options, &mut agent);
-    agent.send_disconnect_message()?;
+    let _ = agent.send_disconnect_message();
     
     result
 }
@@ -31,13 +31,10 @@ fn serve_client(program_options: &ProgramOptions, agent: &mut CommunicationAgent
     agent.receive_message_header_check(MESSAGE_DIR)?;
 
     println!(
-        "{}",
-        format!(
-            "Successfully connected to {}!",
-            program_options.server_ip_address.on_green().white()
-        )
-        .green()
-        .bold()
+        "{}{}{}",
+        "Successfully connected to ".green().bold(),
+        program_options.server_ip_address.on_green().white(),
+        "!".green().bold(),
     );
 
     let dir_description = agent.receive_directory_description()?;
@@ -83,8 +80,9 @@ fn serve_client(program_options: &ProgramOptions, agent: &mut CommunicationAgent
                 let directory_name = input.split_once(char::is_whitespace);
                 if directory_name.is_none() {
                     eprintln!(
-                        "{}",
-                        format!("Usage: `cd <directory_name>`. {}", invalid_dir_name_message).red()
+                        "{}{}",
+                        "Usage: `cd <directory_name>`. ".red(),
+                        invalid_dir_name_message.red(),
                     );
                     continue;
                 }
@@ -93,12 +91,9 @@ fn serve_client(program_options: &ProgramOptions, agent: &mut CommunicationAgent
 
                 if directory_name.is_empty() {
                     eprintln!(
-                        "{}",
-                        format!(
-                            "Error: `directory_name` cannot be empty. {}",
-                            invalid_dir_name_message
-                        )
-                        .red()
+                        "{}{}",
+                        "Error: `directory_name` cannot be empty. ".red(),
+                        invalid_dir_name_message.red(),
                     );
                     continue;
                 }
@@ -110,18 +105,18 @@ fn serve_client(program_options: &ProgramOptions, agent: &mut CommunicationAgent
                 match cd_answer {
                     CdAnswer::DirectoryDoesNotExist => {
                         eprintln!(
-                            "{}",
-                            format!("Error: Directory `{}` does not exist!", directory_name).red()
+                            "{}{}{}",
+                            "Error: Directory `".red(),
+                            directory_name.red(),
+                            "` does not exist!".red(),
                         );
                     }
                     CdAnswer::IllegalDirectory => {
                         eprintln!(
-                            "{}",
-                            format!(
-                                "Error: You don't have access to directory `{}`!",
-                                directory_name
-                            )
-                            .red()
+                            "{}{}{}",
+                            "Error: You don't have access to directory `".red(),
+                            directory_name.red(),
+                            "`!".red(),
                         );
                     }
                     CdAnswer::Success(dir_description) => {
@@ -154,24 +149,26 @@ fn serve_client(program_options: &ProgramOptions, agent: &mut CommunicationAgent
                         match download_fail {
                             FileFail::FileDoesNotExist => {
                                 eprintln!(
-                                    "{}",
-                                    format!("Error: File `{}` does not exist!", file_name).red()
+                                    "{}{}{}",
+                                    "Error: File `".red(),
+                                    file_name.red(),
+                                    "` does not exist!".red(),
                                 );
                             }
                             FileFail::IllegalFile => {
                                 eprintln!(
-                                    "{}",
-                                    format!(
-                                        "Error: You don't have access to file `{}`!",
-                                        file_name
-                                    )
-                                    .red()
+                                    "{}{}{}",
+                                    "Error: You don't have access to file `".red(),
+                                    file_name.red(),
+                                    "{}`!".red(),
                                 );
                             }
                             FileFail::ErrorCreatingFile => {
                                 eprintln!(
-                                    "{}",
-                                    format!("Error: Error creating file `{}`!", file_name).red()
+                                    "{}{}{}",
+                                    "Error: Error creating file `".red(),
+                                    file_name.red(),
+                                    "{}`!".red(),
                                 );
                             }
                         }
@@ -206,8 +203,10 @@ fn serve_client(program_options: &ProgramOptions, agent: &mut CommunicationAgent
 
                 if !fs::exists(file_path).unwrap() || !file_path.is_file() {
                     eprintln!(
-                        "{}",
-                        format!("Error: File `{}` does not exist!", file_name).red()
+                        "{}{}{}",
+                        "Error: File `".red(),
+                        file_name.red(),
+                        "` does not exist!".red(),
                     );
                     continue;
                 }
@@ -275,8 +274,10 @@ fn serve_client(program_options: &ProgramOptions, agent: &mut CommunicationAgent
             }
             Some(command) => {
                 eprintln!(
-                    "{}",
-                    format!("Error: Command `{}` does not exist!", command).red()
+                    "{}{}{}",
+                    "Error: Command `".red(),
+                    command.red(),
+                    "` does not exist!".red(),
                 );
             }
             None => {}
@@ -309,18 +310,16 @@ fn connect_to_server(program_options: &ProgramOptions) -> Result<TcpStream, Quic
 
 fn print_directory_contents(dir_description: &MessageDirectoryContents) {
     println!(
-        "{}",
-        format!(
-            "Displaying contents of {}:",
-            dir_description.location().on_magenta().white()
-        )
-        .magenta()
+        "{}{}{}",
+        "Displaying contents of ".magenta(),
+        dir_description.location().on_magenta().white(),
+        ":".magenta()
     );
     for position in dir_description.positions() {
         if position.is_directory {
-            print!("{}", format!("{}  ", position.name).bright_blue());
+            print!("{}    ", position.name.bright_blue());
         } else {
-            print!("{}", format!("{}  ", position.name).white());
+            print!("{}    ", position.name.white());
         }
     }
     if dir_description.positions().is_empty() {
@@ -337,12 +336,11 @@ fn parse_file_name(input: &str, command: &str) -> Option<String> {
     let file_name = input.split_once(char::is_whitespace);
     if file_name.is_none() {
         println!(
-            "{}",
-            format!(
-                "Usage: `{} <file_path>`. {}",
-                command, invalid_file_name_message
-            )
-            .red()
+            "{}{}{}{}",
+            "Usage: `".red(),
+            command.red(),
+            " <file_path>`. ".red(),
+            invalid_file_name_message.red(),
         );
 
         return None;
@@ -352,12 +350,9 @@ fn parse_file_name(input: &str, command: &str) -> Option<String> {
 
     if file_name.is_empty() {
         println!(
-            "{}",
-            format!(
-                "Note: `file_name` cannot be empty. {}",
-                invalid_file_name_message
-            )
-            .red()
+            "{}{}",
+            "Note: `file_name` cannot be empty. ".red(),
+            invalid_file_name_message.red(),
         );
 
         return None;
