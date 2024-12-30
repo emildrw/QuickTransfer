@@ -17,6 +17,7 @@ pub const MESSAGE_DISCONNECT: &str = "DISCONN_";
 pub const HEADER_NAME_LENGTH: usize = 8;
 pub const MESSAGE_LENGTH_LENGTH: usize = 8;
 pub const MAX_FILE_FRAGMENT_SIZE: usize = 1024;
+pub const ECONNREFUSED: i32 = 111;
 
 // Messages bodies:
 #[derive(Serialize, Deserialize, PartialEq, Debug)]

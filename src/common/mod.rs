@@ -1,11 +1,13 @@
 use core::fmt;
 use messages::{DirectoryPosition, MessageDirectoryContents};
+use rustyline::error::ReadlineError;
 use std::{
     fs::{self, DirEntry},
-    net::TcpStream,
+    //net::TcpStream,
     path::Path,
 };
 use thiserror::Error;
+use tokio::net::TcpStream;
 
 pub mod messages;
 mod receive_utils;
@@ -14,7 +16,7 @@ mod send_utils;
 // Generic constants:
 pub const DEFAULT_PORT: u16 = 47842;
 
-// Enums:
+// Enums and structs:
 #[derive(Copy, Clone, Debug)]
 pub enum ProgramRole {
     Server,
@@ -52,6 +54,11 @@ impl CommunicationAgent<'_> {
     pub fn new(stream: &mut TcpStream, role: ProgramRole) -> CommunicationAgent {
         CommunicationAgent { stream, role }
     }
+}
+
+pub enum ServerCommand {
+    MessageHeader(String),
+    Stdin(Result<String, ReadlineError>),
 }
 
 // Helper functions:
@@ -168,6 +175,9 @@ pub enum QuickTransferError {
 
     #[error("A problem with reading from stdin has occurred.")]
     StdinError,
+
+    #[error("A problem with writing to stdout has occurred.")]
+    StdoutError,
 
     #[error("A problem with reading user's input: {error}")]
     ReadLineError { error: String },

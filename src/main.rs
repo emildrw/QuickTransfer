@@ -1,5 +1,6 @@
 use argparse::{ArgumentParser, Store, StoreTrue};
 use std::path::Path;
+use tokio::sync::mpsc;
 
 mod client;
 mod common;
@@ -68,20 +69,23 @@ fn parse_arguments() -> Option<ProgramOptions> {
     }
 }
 
-fn main() {
+#[tokio::main]
+async fn main() {
     let Some(program_options) = parse_arguments() else {
         return;
     };
 
     if let ProgramRole::Server = program_options.program_role {
-        if let Err(error) = server::handle_server(program_options) {
+        if let Err(error) = server::handle_server(program_options).await {
             eprintln!("{}", error);
         }
+        println!("hey end");
     } else {
-        //options.program_role == ProgramRole::Client
+        // program_options.program_role == ProgramRole::Client;
 
-        if let Err(error) = client::handle_client(&program_options) {
+        if let Err(error) = client::handle_client(&program_options).await {
             eprintln!("{}", error);
         }
+        println!("hey end");
     }
 }
