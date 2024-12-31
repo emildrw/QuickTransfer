@@ -1,6 +1,5 @@
 use argparse::{ArgumentParser, Store, StoreTrue};
 use std::path::Path;
-use tokio::sync::mpsc;
 
 mod client;
 mod common;
@@ -79,13 +78,11 @@ async fn main() {
         if let Err(error) = server::handle_server(program_options).await {
             eprintln!("{}", error);
         }
-        println!("hey end");
     } else {
         // program_options.program_role == ProgramRole::Client;
 
         if let Err(error) = client::handle_client(&program_options).await {
             eprintln!("{}", error);
         }
-        println!("hey end");
     }
 }

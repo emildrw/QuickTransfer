@@ -1,34 +1,32 @@
 use byteorder::{ReadBytesExt, BE};
-use core::{panic, str};
-use std::cmp::min;
-use std::fs::File;
-use std::io::{Cursor, ErrorKind, Read, Write};
-use std::path::Path;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use core::str;
+use std::{
+    cmp::min,
+    fs::File,
+    io::{Cursor, ErrorKind, Write},
+    path::Path,
+};
 use tokio::io::AsyncReadExt;
-use tokio::sync::Mutex as Mutex2;
-use rustyline::{error::ReadlineError, history::History, DefaultEditor};
 
+use super::messages::{CdAnswer, FileFail, UploadResult, MAX_FILE_FRAGMENT_SIZE};
 use crate::common::messages::{
     MessageDirectoryContents, HEADER_NAME_LENGTH, MESSAGE_LENGTH_LENGTH,
 };
-
 use crate::common::{CommunicationAgent, QuickTransferError};
-
-use super::messages::{CdAnswer, FileFail, UploadResult, MAX_FILE_FRAGMENT_SIZE};
-use super::ServerCommand;
 
 impl CommunicationAgent<'_> {
     /// Receives exactly this number of bytes to fill the buffer from TCP.
     async fn receive_tcp(&mut self, message_buffer: &mut [u8]) -> Result<(), QuickTransferError> {
-        self.stream.read_exact(message_buffer).await.map_err(|err| {
-            if let ErrorKind::UnexpectedEof = err.kind() {
-                return QuickTransferError::RemoteClosedConnection(self.role);
-            }
+        self.stream
+            .read_exact(message_buffer)
+            .await
+            .map_err(|err| {
+                if let ErrorKind::UnexpectedEof = err.kind() {
+                    return QuickTransferError::RemoteClosedConnection(self.role);
+                }
 
-            QuickTransferError::MessageReceive(self.role)
-        })?;
+                QuickTransferError::MessageReceive(self.role)
+            })?;
 
         Ok(())
     }
@@ -42,26 +40,6 @@ impl CommunicationAgent<'_> {
             str::from_utf8(&buffer).map_err(|_| QuickTransferError::SentInvalidData(self.role))?;
 
         Ok(String::from(header_received))
-    }
-
-    /// Receives a message header and listens commands on stdin.
-    pub async fn receive_stdin_or_header(&mut self, rl: Arc<Mutex<DefaultEditor>>) -> Result<ServerCommand, QuickTransferError> {
-        tokio::select! {
-            command = CommunicationAgent::read_stdin_command(rl) => {
-                return Ok(ServerCommand::Stdin(command))
-            }
-            message_header = self.receive_message_header() => {
-                let message_header = message_header?;
-                return Ok(ServerCommand::MessageHeader(message_header))
-            }
-        }
-    }
-
-    pub async fn read_stdin_command(rl: Arc<Mutex<DefaultEditor>>) -> Result<String, ReadlineError> {
-        tokio::task::spawn_blocking(move || {
-            let mut rl = rl.lock().unwrap();
-            rl.readline("QuickTransfer> ")
-        }).await.unwrap()
     }
 
     /// Receives a message header and automatically ensures it is equal to `message_header`.
@@ -84,11 +62,8 @@ impl CommunicationAgent<'_> {
 
         self.receive_tcp(&mut buffer).await?;
 
-        // let read_number = Cursor::new(buffer.to_vec())
-        //     .read_u64::<BE>()
-        //     .map_err(|_| QuickTransferError::SentInvalidData(self.role))?;
-
-        let read_number = ReadBytesExt::read_u64::<BE>(&mut Cursor::new(buffer.to_vec())).map_err(|_| QuickTransferError::SentInvalidData(self.role))?;
+        let read_number = ReadBytesExt::read_u64::<BE>(&mut Cursor::new(buffer.to_vec()))
+            .map_err(|_| QuickTransferError::SentInvalidData(self.role))?;
 
         Ok(read_number)
     }
@@ -107,7 +82,10 @@ impl CommunicationAgent<'_> {
     }
 
     /// Receives a string (reads exactly `string_length` bytes so as to receive it).
-    pub async fn receive_string(&mut self, string_length: u64) -> Result<String, QuickTransferError> {
+    pub async fn receive_string(
+        &mut self,
+        string_length: u64,
+    ) -> Result<String, QuickTransferError> {
         let string_length: usize = string_length.try_into().unwrap();
         let mut buffer: Vec<u8> = vec![0_u8; string_length];
         self.receive_tcp(buffer.as_mut_slice()).await?;

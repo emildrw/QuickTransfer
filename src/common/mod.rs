@@ -1,9 +1,7 @@
 use core::fmt;
 use messages::{DirectoryPosition, MessageDirectoryContents};
-use rustyline::error::ReadlineError;
 use std::{
     fs::{self, DirEntry},
-    //net::TcpStream,
     path::Path,
 };
 use thiserror::Error;
@@ -54,11 +52,6 @@ impl CommunicationAgent<'_> {
     pub fn new(stream: &mut TcpStream, role: ProgramRole) -> CommunicationAgent {
         CommunicationAgent { stream, role }
     }
-}
-
-pub enum ServerCommand {
-    MessageHeader(String),
-    Stdin(Result<String, ReadlineError>),
 }
 
 // Helper functions:
@@ -172,9 +165,6 @@ pub enum QuickTransferError {
 
     #[error("A fatal error has occurred.")]
     FatalError,
-
-    #[error("A problem with reading from stdin has occurred.")]
-    StdinError,
 
     #[error("A problem with writing to stdout has occurred.")]
     StdoutError,

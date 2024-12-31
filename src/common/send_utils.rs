@@ -1,9 +1,9 @@
 use byteorder::{WriteBytesExt, BE};
-use tokio::time::sleep;
-use std::fs::File;
-use std::io::{ErrorKind, Read, Write};
-use std::path::Path;
-use std::time::Duration;
+use std::{
+    fs::File,
+    io::{ErrorKind, Read},
+    path::Path,
+};
 use tokio::io::AsyncWriteExt;
 
 use crate::common::messages::{MESSAGE_DIR, MESSAGE_INIT, MESSAGE_UPLOAD};
@@ -30,7 +30,8 @@ impl CommunicationAgent<'_> {
         if flush {
             self.stream
                 .flush()
-                .await.map_err(|_| QuickTransferError::ErrorWhileSendingMessage(self.role))?;
+                .await
+                .map_err(|_| QuickTransferError::ErrorWhileSendingMessage(self.role))?;
         }
 
         Ok(())
@@ -57,11 +58,8 @@ impl CommunicationAgent<'_> {
             .map_err(|_| QuickTransferError::ReadingDirectoryContents)?;
 
         // We assume that usize <= u64:
-        // dir_message
-        //     .write_u64::<BE>(dir_description.len().try_into().unwrap())
-        //     .map_err(|_| QuickTransferError::FatalError)?;
-
-        WriteBytesExt::write_u64::<BE>(&mut dir_message, dir_description.len().try_into().unwrap()).map_err(|_| QuickTransferError::FatalError)?;
+        WriteBytesExt::write_u64::<BE>(&mut dir_message, dir_description.len().try_into().unwrap())
+            .map_err(|_| QuickTransferError::FatalError)?;
 
         dir_message.extend(dir_description);
 
@@ -78,11 +76,8 @@ impl CommunicationAgent<'_> {
         let mut cd_message = MESSAGE_CD.as_bytes().to_vec();
 
         // We assume that usize <= u64:
-        // cd_message
-        //     .write_u64::<BE>(directory_name.len().try_into().unwrap())
-        //     .map_err(|_| QuickTransferError::FatalError)?;
-
-        WriteBytesExt::write_u64::<BE>(&mut cd_message, directory_name.len().try_into().unwrap()).map_err(|_| QuickTransferError::FatalError)?;
+        WriteBytesExt::write_u64::<BE>(&mut cd_message, directory_name.len().try_into().unwrap())
+            .map_err(|_| QuickTransferError::FatalError)?;
 
         cd_message.extend(directory_name.as_bytes());
 
@@ -97,11 +92,8 @@ impl CommunicationAgent<'_> {
         let answer = bincode::serialize(answer).map_err(|_| QuickTransferError::FatalError)?;
 
         // We assume that usize <= u64:
-        // cdanswer_message
-        //     .write_u64::<BE>(answer.len().try_into().unwrap())
-        //     .map_err(|_| QuickTransferError::FatalError)?;
-
-        WriteBytesExt::write_u64::<BE>(&mut cdanswer_message, answer.len().try_into().unwrap()).map_err(|_| QuickTransferError::FatalError)?;
+        WriteBytesExt::write_u64::<BE>(&mut cdanswer_message, answer.len().try_into().unwrap())
+            .map_err(|_| QuickTransferError::FatalError)?;
 
         cdanswer_message.extend(answer);
 
@@ -118,15 +110,15 @@ impl CommunicationAgent<'_> {
     }
 
     /// Sends file download request: header, file name length, file name.
-    pub async fn send_download_request(&mut self, file_name: &str) -> Result<(), QuickTransferError> {
+    pub async fn send_download_request(
+        &mut self,
+        file_name: &str,
+    ) -> Result<(), QuickTransferError> {
         let mut download_message = MESSAGE_DOWNLOAD.as_bytes().to_vec();
 
         // We assume that usize <= u64:
-        // download_message
-        //     .write_u64::<BE>(file_name.len().try_into().unwrap())
-        //     .map_err(|_| QuickTransferError::FatalError)?;
-
-        WriteBytesExt::write_u64::<BE>(&mut download_message, file_name.len().try_into().unwrap()).map_err(|_| QuickTransferError::FatalError)?;
+        WriteBytesExt::write_u64::<BE>(&mut download_message, file_name.len().try_into().unwrap())
+            .map_err(|_| QuickTransferError::FatalError)?;
 
         download_message.extend(file_name.as_bytes());
 
@@ -145,30 +137,33 @@ impl CommunicationAgent<'_> {
             bincode::serialize(download_fail).map_err(|_| QuickTransferError::FatalError)?;
 
         // We assume that usize <= u64:
-        // download_fail_message
-        //     .write_u64::<BE>(answer.len().try_into().unwrap())
-        //     .map_err(|_| QuickTransferError::FatalError)?;
-        WriteBytesExt::write_u64::<BE>(&mut download_fail_message, answer.len().try_into().unwrap()).map_err(|_| QuickTransferError::FatalError)?;
+        WriteBytesExt::write_u64::<BE>(
+            &mut download_fail_message,
+            answer.len().try_into().unwrap(),
+        )
+        .map_err(|_| QuickTransferError::FatalError)?;
 
         download_fail_message.extend(answer);
 
-        self.send_tcp(download_fail_message.as_slice(), true).await?;
+        self.send_tcp(download_fail_message.as_slice(), true)
+            .await?;
 
         Ok(())
     }
 
     /// Sends download success message: header, file size (in bytes) (without file contents!)
-    pub async fn send_download_success(&mut self, file_size: u64) -> Result<(), QuickTransferError> {
+    pub async fn send_download_success(
+        &mut self,
+        file_size: u64,
+    ) -> Result<(), QuickTransferError> {
         let mut download_success_message = MESSAGE_DOWNLOAD_SUCCESS.as_bytes().to_vec();
 
         // We assume that usize <= u64:
-        // download_success_message
-        //     .write_u64::<BE>(file_size)
-        //     .map_err(|_| QuickTransferError::FatalError)?;
+        WriteBytesExt::write_u64::<BE>(&mut download_success_message, file_size)
+            .map_err(|_| QuickTransferError::FatalError)?;
 
-        WriteBytesExt::write_u64::<BE>(&mut download_success_message, file_size).map_err(|_| QuickTransferError::FatalError)?;
-
-        self.send_tcp(download_success_message.as_slice(), true).await?;
+        self.send_tcp(download_success_message.as_slice(), true)
+            .await?;
 
         Ok(())
     }
@@ -194,7 +189,8 @@ impl CommunicationAgent<'_> {
             }
             let read_bytes_u64 = read_bytes.try_into().unwrap();
 
-            self.send_tcp(&buffer[..read_bytes], bytes_to_send_left <= read_bytes_u64).await?;
+            self.send_tcp(&buffer[..read_bytes], bytes_to_send_left <= read_bytes_u64)
+                .await?;
             bytes_to_send_left -= read_bytes_u64;
         }
 
@@ -218,19 +214,14 @@ impl CommunicationAgent<'_> {
         let mut upload_message = MESSAGE_UPLOAD.as_bytes().to_vec();
 
         // We assume that usize <= u64:
-        // upload_message
-        //     .write_u64::<BE>(file_name.len().try_into().unwrap())
-        //     .map_err(|_| QuickTransferError::FatalError)?;
-        
-        WriteBytesExt::write_u64::<BE>(&mut upload_message, file_name.len().try_into().unwrap()).map_err(|_| QuickTransferError::FatalError)?;
+        WriteBytesExt::write_u64::<BE>(&mut upload_message, file_name.len().try_into().unwrap())
+            .map_err(|_| QuickTransferError::FatalError)?;
 
         upload_message.extend(file_name.as_bytes());
 
         // We assume that usize <= u64:
-        // upload_message
-        //     .write_u64::<BE>(file_size)
-        //     .map_err(|_| QuickTransferError::FatalError)?;
-        WriteBytesExt::write_u64::<BE>(&mut upload_message, file_size) .map_err(|_| QuickTransferError::FatalError)?;
+        WriteBytesExt::write_u64::<BE>(&mut upload_message, file_size)
+            .map_err(|_| QuickTransferError::FatalError)?;
 
         self.send_tcp(upload_message.as_slice(), true).await?;
 
@@ -240,17 +231,17 @@ impl CommunicationAgent<'_> {
     }
 
     /// Sends upload fail message: header, answer length, answer.
-    pub async fn send_upload_fail(&mut self, upload_fail: FileFail) -> Result<(), QuickTransferError> {
+    pub async fn send_upload_fail(
+        &mut self,
+        upload_fail: FileFail,
+    ) -> Result<(), QuickTransferError> {
         let mut upload_fail_message = MESSAGE_UPLOAD_RESULT.as_bytes().to_vec();
         let answer = bincode::serialize(&UploadResult::Fail(upload_fail))
             .map_err(|_| QuickTransferError::FatalError)?;
 
         // We assume that usize <= u64:
-        // upload_fail_message
-        //     .write_u64::<BE>(answer.len().try_into().unwrap())
-        //     .map_err(|_| QuickTransferError::FatalError)?;
-
-        WriteBytesExt::write_u64::<BE>(&mut upload_fail_message, answer.len().try_into().unwrap()).map_err(|_| QuickTransferError::FatalError)?;
+        WriteBytesExt::write_u64::<BE>(&mut upload_fail_message, answer.len().try_into().unwrap())
+            .map_err(|_| QuickTransferError::FatalError)?;
 
         upload_fail_message.extend(answer);
 
@@ -266,10 +257,8 @@ impl CommunicationAgent<'_> {
             .map_err(|_| QuickTransferError::FatalError)?;
 
         // We assume that usize <= u64:
-        // upload_success
-        //     .write_u64::<BE>(answer.len().try_into().unwrap())
-        //     .map_err(|_| QuickTransferError::FatalError)?;
-        WriteBytesExt::write_u64::<BE>(&mut upload_success, answer.len().try_into().unwrap()).map_err(|_| QuickTransferError::FatalError)?;
+        WriteBytesExt::write_u64::<BE>(&mut upload_success, answer.len().try_into().unwrap())
+            .map_err(|_| QuickTransferError::FatalError)?;
 
         upload_success.extend(answer);
 
