@@ -62,6 +62,7 @@ async fn serve_client(
     loop {
         tokio::select! {
             header_received = agent.receive_message_header() => {
+                println!("Rcv sth: {:?}", header_received);
                 let header_received = header_received?;
                 if header_received.as_str() == MESSAGE_DISCONNECT {
                     println!(

@@ -1,11 +1,19 @@
 use colored::*;
-use rustyline_async::{Readline, ReadlineEvent};
+use rustyline_async::{Readline, ReadlineEvent, SharedWriter};
 use std::{
     fs::{self, File},
     io::Write,
+    ops::Deref,
     path::{Path, PathBuf},
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    },
 };
-use tokio::net::{TcpListener, TcpStream};
+use tokio::{
+    net::{TcpListener, TcpStream},
+    sync::broadcast::{self, Receiver, Sender},
+};
 
 use crate::common::messages::{
     CdAnswer, FileFail, MESSAGE_CD, MESSAGE_DISCONNECT, MESSAGE_DOWNLOAD, MESSAGE_INIT, MESSAGE_LS,
@@ -24,13 +32,112 @@ pub async fn handle_server(program_options: ProgramOptions) -> Result<(), QuickT
     );
 
     let listener = create_a_listener(&program_options).await?;
+    let program_options_arc = Arc::new(program_options);
 
-    // For now, the server operates one client and exits.
-    let incoming = listener
-        .accept()
-        .await
-        .map_err(|_| QuickTransferError::ConnectionCreation)?;
-    handle_client_as_a_server(incoming.0, &program_options).await?;
+    // Bool -> stop thread listening for next clients
+    let (tx_stop, mut rx_stop) = broadcast::channel(1);
+    let tx_stop2 = tx_stop.clone();
+    let (tx_disconnected, mut rx_disconnected) = broadcast::channel(1);
+
+    let rl = Readline::new(String::from("QuickTransfer> ")).unwrap();
+    let mut writer = rl.1;
+    let mut rl = rl.0;
+    let writer2 = writer.clone();
+
+    let connected_clients = Arc::new(AtomicUsize::new(0));
+    let connected_clients2 = Arc::clone(&connected_clients);
+
+    tokio::spawn(async move {
+        // Pre-print user help:
+        let mut user_help = String::new();
+        preprint_user_help(&mut user_help);
+
+        loop {
+            tokio::select! {
+                _ = rx_disconnected.recv() => {
+                    connected_clients.fetch_sub(1, Ordering::Relaxed);
+                    if connected_clients.load(Ordering::Relaxed) == 0 {
+                        tx_stop.send(true).unwrap();
+
+                        return Ok(());
+                    }
+                }
+                command = rl.readline() => {
+                    match command {
+                        Err(err) => {
+                            return Err(QuickTransferError::ReadLineError {
+                                error: err.to_string(),
+                            });
+                        }
+                        Ok(ReadlineEvent::Eof) => {
+                            eprintln!("^D");
+                            tx_stop.send(false).unwrap();
+                        }
+                        Ok(ReadlineEvent::Interrupted) => {
+                            eprintln!("^C");
+                            tx_stop.send(false).unwrap();
+                        }
+                        Ok(ReadlineEvent::Line(ref line)) => {
+                            rl.add_history_entry(line.to_string());
+
+                            let input = line.trim();
+                            let mut input_splitted = input.split_whitespace();
+                            let command = input_splitted.next();
+
+                            match command {
+                                Some("exit") | Some("disconnect") | Some("quit") => {
+                                    tx_stop.send(false).unwrap();
+                                }
+                                Some("help") => {
+                                    Write::write(&mut writer, user_help.as_bytes()).map_err(|_| QuickTransferError::StdoutError)?;
+                                }
+                                Some(command) => {
+                                    writeln!(
+                                        writer,
+                                        "{}{}{}",
+                                        "Error: Command `".red(),
+                                        command.red(),
+                                        "` does not exist!".red(),
+                                    ).map_err(|_| QuickTransferError::StdoutError)?;
+                                }
+                                None => {
+
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    });
+
+    loop {
+        tokio::select! {
+            message = rx_stop.recv() => {
+                let message = message.unwrap();
+
+                if message {
+                    // trzeba poczekać, aż wszystkie wątki się zakończą
+                    break;
+                }
+            }
+            stream = listener.accept() => {
+                let stream = stream.map_err(|_| QuickTransferError::ConnectionCreation)?.0;
+                connected_clients2.fetch_add(1, Ordering::Relaxed);
+
+                let program_options_arc = Arc::clone(&program_options_arc);
+                let rx_stop = tx_stop2.subscribe();
+                let tx_disconnected = tx_disconnected.clone();
+                let mut writer = writer2.clone();
+
+                tokio::spawn(async move {
+                    handle_client_as_a_server(stream, program_options_arc.deref(), tx_disconnected, rx_stop, &mut writer).await?;
+
+                    Ok::<(), QuickTransferError>(())
+                });
+            }
+        }
+    }
 
     Ok(())
 }
@@ -53,6 +160,9 @@ async fn create_a_listener(
 async fn handle_client_as_a_server(
     mut stream: TcpStream,
     program_options: &ProgramOptions,
+    tx_disconnected: Sender<()>,
+    mut rx_stop: Receiver<bool>,
+    writer: &mut SharedWriter,
 ) -> Result<(), QuickTransferError> {
     // The documentation doesn't say, when this functions returns an error, so let's assume that never:
     let client_address = stream.peer_addr().unwrap();
@@ -62,12 +172,14 @@ async fn handle_client_as_a_server(
 
     let client_name = client_address.ip().to_canonical().to_string();
 
-    println!(
+    writeln!(
+        writer,
         "{}{}{}",
         "A new client (".green().bold(),
         client_name.on_green().white(),
         ") has connected!".green().bold(),
-    );
+    )
+    .map_err(|_| QuickTransferError::StdoutError)?;
 
     let mut current_path = PathBuf::new();
     current_path.push(&program_options.root_directory);
@@ -78,60 +190,16 @@ async fn handle_client_as_a_server(
         .send_directory_description(&current_path, &root_directory)
         .await?;
 
-    let rl = Readline::new(String::from("QuickTransfer> ")).unwrap();
-    let mut writer = rl.1;
-    let mut rl = rl.0;
-
-    // Pre-print user help:
-    let mut user_help = String::new();
-    preprint_user_help(&mut user_help);
-
     loop {
         tokio::select! {
-            command = rl.readline() => {
-                match command {
-                    Err(err) => {
-                        return Err(QuickTransferError::ReadLineError {
-                            error: err.to_string(),
-                        });
-                    }
-                    Ok(ReadlineEvent::Eof) => {
-                        eprintln!("^D");
-                        return Ok(());
-                    }
-                    Ok(ReadlineEvent::Interrupted) => {
-                        eprintln!("^C");
-                        return Ok(());
-                    }
-                    Ok(ReadlineEvent::Line(ref line)) => {
-                        rl.add_history_entry(line.to_string());
+            message = rx_stop.recv() => {
+                let message = message.unwrap();
 
-                        let input = line.trim();
-                        let mut input_splitted = input.split_whitespace();
-                        let command = input_splitted.next();
+                if !message {
+                    agent.send_disconnect_message().await?;
+                    tx_disconnected.send(()).unwrap();
 
-                        match command {
-                            Some("exit") | Some("disconnect") | Some("quit") => {
-                                agent.send_disconnect_message().await?;
-                                return Ok(())
-                            }
-                            Some("help") => {
-                                Write::write(&mut writer, user_help.as_bytes()).map_err(|_| QuickTransferError::StdoutError)?;
-                            }
-                            Some(command) => {
-                                writeln!(
-                                    writer,
-                                    "{}{}{}",
-                                    "Error: Command `".red(),
-                                    command.red(),
-                                    "` does not exist!".red(),
-                                ).map_err(|_| QuickTransferError::StdoutError)?;
-                            }
-                            None => {
-
-                            }
-                        }
-                    }
+                    return Ok(());
                 }
             }
             header_received = agent.receive_message_header() => {
@@ -210,19 +278,15 @@ async fn handle_client_as_a_server(
                         }
                     }
                     MESSAGE_DISCONNECT => {
-                        // writeln!(
-                        //     writer,
-                        //     "{}{}{}",
-                        //     "Client (".green().bold(),
-                        //     client_name.on_green().white(),
-                        //     ") has disconnected.".green().bold(),
-                        // ).map_err(|_| QuickTransferError::StdoutError)?;
-                        println!(
-                            "\n{}{}{}",
+                        writeln!(
+                            writer,
+                            "{}{}{}",
                             "Client (".green().bold(),
                             client_name.on_green().white(),
-                            ") has disconnected.".green().bold()
-                        );
+                            ") has disconnected.".green().bold(),
+                        ).map_err(|_| QuickTransferError::StdoutError)?;
+
+                        tx_disconnected.send(()).unwrap();
 
                         return Ok(());
                     }
@@ -233,6 +297,9 @@ async fn handle_client_as_a_server(
                             client_name.red(),
                             "` sent an invalid message. Disconnecting...".red(),
                         );
+
+                        tx_disconnected.send(()).unwrap();
+
                         return Ok(());
                     }
                 }

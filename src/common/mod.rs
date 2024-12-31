@@ -148,7 +148,7 @@ pub enum QuickTransferError {
     #[error("An error occurred while creating a connection. Please try again.")]
     ConnectionCreation,
 
-    #[error("An error occurred while sending message to {}.", read_opposite_role(.0, false))]
+    #[error("An error occurred while receiving a message from {}.", read_opposite_role(.0, false))]
     MessageReceive(ProgramRole),
 
     #[error("{} closed the connection. Turn on QuickTransfer on {} computer again.", read_opposite_role(.0, true), read_opposite_role(.0, false))]
