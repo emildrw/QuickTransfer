@@ -8,9 +8,7 @@ use std::{
 use tokio::net::TcpStream;
 
 use crate::common::messages::{
-    CdAnswer, FileFail, MessageDirectoryContents, UploadResult, ECONNREFUSED, MESSAGE_CDANSWER,
-    MESSAGE_DIR, MESSAGE_DISCONNECT, MESSAGE_DOWNLOAD_FAIL, MESSAGE_DOWNLOAD_SUCCESS,
-    MESSAGE_UPLOAD_RESULT,
+    CdAnswer, FileFail, MessageDirectoryContents, MkdirAnswer, UploadResult, ECONNREFUSED, MESSAGE_CDANSWER, MESSAGE_DIR, MESSAGE_DISCONNECT, MESSAGE_DOWNLOAD_FAIL, MESSAGE_DOWNLOAD_SUCCESS, MESSAGE_MKDIRANS, MESSAGE_UPLOAD_RESULT
 };
 use crate::common::{CommunicationAgent, ProgramOptions, ProgramRole, QuickTransferError};
 
@@ -22,7 +20,7 @@ pub async fn handle_client(program_options: &ProgramOptions) -> Result<(), Quick
     );
 
     let mut stream = connect_to_server(program_options).await?;
-    let mut agent = CommunicationAgent::new(&mut stream, ProgramRole::Client);
+    let mut agent = CommunicationAgent::new(&mut stream, ProgramRole::Client, program_options.timeout);
     let result = serve_client(program_options, &mut agent).await;
     if let Ok(client_disconnected) = result {
         if client_disconnected {
@@ -62,7 +60,6 @@ async fn serve_client(
     loop {
         tokio::select! {
             header_received = agent.receive_message_header() => {
-                println!("Rcv sth: {:?}", header_received);
                 let header_received = header_received?;
                 if header_received.as_str() == MESSAGE_DISCONNECT {
                     println!(
@@ -271,6 +268,65 @@ async fn serve_client(
                                     }
                                 }
                             }
+                            Some("mkdir") => {
+                                let directory_name = input.split_once(char::is_whitespace);
+                                if directory_name.is_none() {
+                                    writeln!(
+                                        writer,
+                                        "{}{}",
+                                        "Usage: `mkdir <directory_name>`. ".red(),
+                                        invalid_dir_name_message.red(),
+                                    ).map_err(|_| QuickTransferError::StdoutError)?;
+
+                                    continue;
+                                }
+
+                                let directory_name = String::from(directory_name.unwrap().1);
+
+                                if directory_name.is_empty() {
+                                    writeln!(
+                                        writer,
+                                        "{}{}",
+                                        "Error: `directory_name` cannot be empty. ".red(),
+                                        invalid_dir_name_message.red(),
+                                    ).map_err(|_| QuickTransferError::StdoutError)?;
+                                    continue;
+                                }
+
+                                agent.send_mkdir(&directory_name).await?;
+                                agent.receive_message_header_check(MESSAGE_MKDIRANS).await?;
+
+                                let mkdir_answer = agent.receive_mkdir_answer().await?;
+                                match mkdir_answer {
+                                    MkdirAnswer::DirectoryAlreadyExists => {
+                                        writeln!(
+                                            writer,
+                                            "{}{}{}",
+                                            "Error: Directory `".red(),
+                                            directory_name.red(),
+                                            "` already exists!".red(),
+                                        ).map_err(|_| QuickTransferError::StdoutError)?;
+                                    
+                                    }
+                                    MkdirAnswer::ErrorCreatingDirectory => {
+                                        writeln!(
+                                            writer,
+                                            "{}{}{}",
+                                            "Error: An error creating directory `".red(),
+                                            directory_name.red(),
+                                            "` has occurred.".red(),
+                                        ).map_err(|_| QuickTransferError::StdoutError)?;
+                                    }
+                                    MkdirAnswer::Success => {
+                                        println!("Successfully created directory `{}`.", directory_name);
+
+                                        agent.send_list_directory().await?;
+                                        agent.receive_message_header_check(MESSAGE_DIR).await?;
+                                        let dir_description = agent.receive_directory_description().await?;
+                                        print_directory_contents(&dir_description, &mut writer)?;
+                                    }
+                                }
+                            }
                             Some("exit") | Some("disconnect") | Some("quit") => {
                                 return Ok(true);
                             }
@@ -410,6 +466,7 @@ fn preprint_user_help(help_msg: &mut String) {
     help_msg.push_str("                                 in current view (overrides files). If\n");
     help_msg
         .push_str("                                 the file exists, it will be overwritten.\n");
+    help_msg.push_str("  mkdir <directory_name>         Create a new directory in current location.\n");
 
     help_msg.push_str(
         "  exit; disconnect; quit         Gracefully disconnect and exit QuickTransfer.\n",

@@ -25,6 +25,7 @@ Optional arguments:
 - `-s, --server` -- Run QuickTransfer in server mode
 - `-p, --port PORT` -- In client mode: port, to which the program should connect on the server; in server mode: port, on which the program should listen on. The value should be between 0-65535. Default: `47842`
 - `-r, --root ROOT` -- Specify, which directory will be the root of filesystem shared with clients (as a server). Default: `./`
+- `-t, --timeout TIMEOUT` -- Specify timeout (in seconds) for waiting for the whole message. Default: `5`
 
 ## Program operation
 QuickTransfer provides an intuitive input/output system for operating with files on the server (from client). There are some commands that user may use for that purpose:
@@ -32,6 +33,7 @@ QuickTransfer provides an intuitive input/output system for operating with files
 - `ls` -- Display current directory contents.
 - `download <file_path>` -- Download the file from `file_path` (relative to current view) to current directory (i.e. on which QuickTransfer has been run). If the file exists, it will be overwritten.
 - `upload <file_path>` -- Upload the file from `file_path` (relative to current directory, i.e. on which QuickTransfer has been run) to directory in current view (overrides files). If the file exists, it will be overwritten.
+- `mkdir <directory_name>` -- Create a new directory in current location.
 - `exit; disconnect; quit` -- Gracefully disconnect and exit QuickTransfer.
 
 ## Program protocol
@@ -51,6 +53,8 @@ All messages' exchanged within client and server have headers: they are a sequen
 - "DOWNLOAD_SUCCESS": `| 8B: DOWN_SUCC | 8B: (length of the file) | ?B: (file content) |` -- sent by server
 - "UPLOAD": `| 8B: UPLOAD__ | 8B: (length of file name) | ?B: (file name) | 8B: (length of the file) | ?B: (file content) |` -- sent by client
 - "UPLOAD_RESULT": `| 8B: UPLOADRE | 8B: (length of the answer) | ?B: (answer) |`  -- sent by server
+- "MKDIR": `| 8B: MKDIR___ | 8B: (length of the name) | ?B: (name) |` -- sent by client
+- "MKDIRANS": `| 8B: MKDIR___ | 8B: (length of the answer) | ?B: (answer) |` -- sent by server
 - "DISCONNECT": `| 8B: DISCONN_ |` -- sent by client
 
 #### Message exchange process

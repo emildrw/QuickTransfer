@@ -13,6 +13,7 @@ mod send_utils;
 
 // Generic constants:
 pub const DEFAULT_PORT: u16 = 47842;
+pub const DEFAULT_TIMEOUT: u16 = 5;
 
 // Enums and structs:
 #[derive(Copy, Clone, Debug)]
@@ -40,17 +41,19 @@ pub struct ProgramOptions {
     pub server_ip_address: String,
     pub port: u16,
     pub root_directory: String,
+    pub timeout: u16,
 }
 
 /// A helper providing an abstraction for sending and receiving messages.
 pub struct CommunicationAgent<'a> {
     stream: &'a mut TcpStream,
     role: ProgramRole,
+    timeout: u16,
 }
 
 impl CommunicationAgent<'_> {
-    pub fn new(stream: &mut TcpStream, role: ProgramRole) -> CommunicationAgent {
-        CommunicationAgent { stream, role }
+    pub fn new(stream: &mut TcpStream, role: ProgramRole, timeout: u16) -> CommunicationAgent {
+        CommunicationAgent { stream, role, timeout }
     }
 }
 
@@ -151,6 +154,9 @@ pub enum QuickTransferError {
     #[error("An error occurred while receiving a message from {}.", read_opposite_role(.0, false))]
     MessageReceive(ProgramRole),
 
+    #[error("Timeout for receiving the message from {} has passed.", read_opposite_role(.0, false))]
+    MessageReceiveTimeout(ProgramRole),
+
     #[error("{} closed the connection. Turn on QuickTransfer on {} computer again.", read_opposite_role(.0, true), read_opposite_role(.0, false))]
     RemoteClosedConnection(ProgramRole),
 
@@ -180,4 +186,7 @@ pub enum QuickTransferError {
 
     #[error("A problem with writing file `{file_path}` has occurred.")]
     ProblemWritingFile { file_path: String },
+
+    #[error("A problem with creating a directory `{directory_name}` has occurred.")]
+    ProblemCreatingDirectory { directory_name: String },
 }

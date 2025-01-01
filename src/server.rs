@@ -16,8 +16,7 @@ use tokio::{
 };
 
 use crate::common::messages::{
-    CdAnswer, FileFail, MESSAGE_CD, MESSAGE_DISCONNECT, MESSAGE_DOWNLOAD, MESSAGE_INIT, MESSAGE_LS,
-    MESSAGE_UPLOAD,
+    CdAnswer, FileFail, MkdirAnswer, MESSAGE_CD, MESSAGE_DISCONNECT, MESSAGE_DOWNLOAD, MESSAGE_INIT, MESSAGE_LS, MESSAGE_MKDIR, MESSAGE_UPLOAD
 };
 use crate::common::{
     directory_description, CommunicationAgent, ProgramOptions, ProgramRole, QuickTransferError,
@@ -26,15 +25,14 @@ use crate::common::{
 /// This functions server program run in server mode.
 pub async fn handle_server(program_options: ProgramOptions) -> Result<(), QuickTransferError> {
     println!(
-        // "Welcome to QuickTransfer!\nTo exit, type `exit`.\nWaiting for clients to connect on port {}...",
-        "Welcome to QuickTransfer!\nWaiting for clients to connect on port {} (interface {})...",
+        "Welcome to QuickTransfer!\nTo exit, type `exit`.\nWaiting for clients to connect on port {} (interface {})...",
         program_options.port, program_options.server_ip_address,
     );
 
     let listener = create_a_listener(&program_options).await?;
     let program_options_arc = Arc::new(program_options);
 
-    // Bool -> stop thread listening for next clients
+    // Bool -> true iff stop thread listening for next clients
     let (tx_stop, mut rx_stop) = broadcast::channel(1);
     let tx_stop2 = tx_stop.clone();
     let (tx_disconnected, mut rx_disconnected) = broadcast::channel(1);
@@ -56,10 +54,9 @@ pub async fn handle_server(program_options: ProgramOptions) -> Result<(), QuickT
             tokio::select! {
                 _ = rx_disconnected.recv() => {
                     connected_clients.fetch_sub(1, Ordering::Relaxed);
-                    if connected_clients.load(Ordering::Relaxed) == 0 {
-                        tx_stop.send(true).unwrap();
 
-                        return Ok(());
+                    if check_clients_number_and_stop(&connected_clients, &tx_stop, true)? {
+                        return Ok(())
                     }
                 }
                 command = rl.readline() => {
@@ -71,11 +68,19 @@ pub async fn handle_server(program_options: ProgramOptions) -> Result<(), QuickT
                         }
                         Ok(ReadlineEvent::Eof) => {
                             eprintln!("^D");
-                            tx_stop.send(false).unwrap();
+                            if check_clients_number_and_stop(&connected_clients, &tx_stop, false)? {
+                                return Ok(())
+                            } else {
+                                tx_stop.send(false).unwrap();
+                            }
                         }
                         Ok(ReadlineEvent::Interrupted) => {
                             eprintln!("^C");
-                            tx_stop.send(false).unwrap();
+                            if check_clients_number_and_stop(&connected_clients, &tx_stop, false)? {
+                                return Ok(())
+                            } else {
+                                tx_stop.send(false).unwrap();
+                            }
                         }
                         Ok(ReadlineEvent::Line(ref line)) => {
                             rl.add_history_entry(line.to_string());
@@ -115,9 +120,7 @@ pub async fn handle_server(program_options: ProgramOptions) -> Result<(), QuickT
         tokio::select! {
             message = rx_stop.recv() => {
                 let message = message.unwrap();
-
                 if message {
-                    // trzeba poczekać, aż wszystkie wątki się zakończą
                     break;
                 }
             }
@@ -131,7 +134,11 @@ pub async fn handle_server(program_options: ProgramOptions) -> Result<(), QuickT
                 let mut writer = writer2.clone();
 
                 tokio::spawn(async move {
-                    handle_client_as_a_server(stream, program_options_arc.deref(), tx_disconnected, rx_stop, &mut writer).await?;
+                    let result = handle_client_as_a_server(stream, program_options_arc.deref(), tx_disconnected.clone(), rx_stop, &mut writer).await;
+                    if let Err(error) = result {
+                        tx_disconnected.send(()).unwrap();
+                        eprintln!("{}", error);
+                    }
 
                     Ok::<(), QuickTransferError>(())
                 });
@@ -140,6 +147,23 @@ pub async fn handle_server(program_options: ProgramOptions) -> Result<(), QuickT
     }
 
     Ok(())
+}
+
+/// Checks whether there are 0 clients and returns whether the server should be stopped.
+fn check_clients_number_and_stop(connected_clients: &Arc<AtomicUsize>, tx_stop: &Sender<bool>, print_message: bool) -> Result<bool, QuickTransferError> {
+    if connected_clients.load(Ordering::Relaxed) == 0 {
+        tx_stop.send(true).unwrap();
+        if print_message {
+            println!(
+                "\n{}",
+                "All clients have disconnected.".green().bold(),
+            );
+        }
+
+        return Ok(true);
+    }
+
+    Ok(false)
 }
 
 /// Creates a TCP listener for server.
@@ -166,9 +190,12 @@ async fn handle_client_as_a_server(
 ) -> Result<(), QuickTransferError> {
     // The documentation doesn't say, when this functions returns an error, so let's assume that never:
     let client_address = stream.peer_addr().unwrap();
-    let mut agent = CommunicationAgent::new(&mut stream, ProgramRole::Server);
+    let mut agent = CommunicationAgent::new(&mut stream, ProgramRole::Server, program_options.timeout);
 
-    agent.receive_message_header_check(MESSAGE_INIT).await?;
+    let res = agent.receive_message_header_check(MESSAGE_INIT).await;
+    if let Err(xd) = res {
+        return Err(xd);
+    }
 
     let client_name = client_address.ip().to_canonical().to_string();
 
@@ -277,6 +304,27 @@ async fn handle_client_as_a_server(
                             agent.send_upload_success().await?;
                         }
                     }
+                    MESSAGE_MKDIR => {
+                        let directory_name = agent.receive_length_with_string().await?;
+                        let mut next_path = current_path.to_path_buf();
+                        next_path.push(&directory_name);
+
+                        if fs::exists(next_path.as_path()).unwrap() {
+                            agent.send_mkdir_answer(&MkdirAnswer::DirectoryAlreadyExists).await?;
+                            continue;
+                        }
+
+                        if !next_path.starts_with(root_directory.clone()) || next_path == current_path {
+                            agent.send_mkdir_answer(&MkdirAnswer::ErrorCreatingDirectory).await?;
+                            continue;
+                        }
+
+                        fs::create_dir(&next_path).map_err(|_| QuickTransferError::ProblemCreatingDirectory {
+                            directory_name
+                        })?;
+
+                        agent.send_mkdir_answer(&MkdirAnswer::Success).await?;
+                    }
                     MESSAGE_DISCONNECT => {
                         writeln!(
                             writer,
@@ -285,6 +333,8 @@ async fn handle_client_as_a_server(
                             client_name.on_green().white(),
                             ") has disconnected.".green().bold(),
                         ).map_err(|_| QuickTransferError::StdoutError)?;
+
+                        writer.flush().map_err(|_| QuickTransferError::StdoutError)?;
 
                         tx_disconnected.send(()).unwrap();
 

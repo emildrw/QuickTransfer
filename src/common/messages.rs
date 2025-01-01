@@ -11,6 +11,8 @@ pub const MESSAGE_DOWNLOAD_FAIL: &str = "DOWNFAIL";
 pub const MESSAGE_DOWNLOAD_SUCCESS: &str = "DOWNSUCC";
 pub const MESSAGE_UPLOAD: &str = "UPLOAD__";
 pub const MESSAGE_UPLOAD_RESULT: &str = "UPLOADRE";
+pub const MESSAGE_MKDIR: &str = "MKDIR___";
+pub const MESSAGE_MKDIRANS: &str = "MKDIRANS";
 pub const MESSAGE_DISCONNECT: &str = "DISCONN_";
 
 // Constans:
@@ -64,5 +66,12 @@ pub enum FileFail {
 #[derive(Serialize, Deserialize, PartialEq, Debug)]
 pub enum UploadResult {
     Fail(FileFail),
+    Success,
+}
+
+#[derive(Serialize, Deserialize, PartialEq, Debug)]
+pub enum MkdirAnswer {
+    DirectoryAlreadyExists,
+    ErrorCreatingDirectory,
     Success,
 }

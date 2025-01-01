@@ -9,7 +9,7 @@ use tokio::io::AsyncWriteExt;
 use crate::common::messages::{MESSAGE_DIR, MESSAGE_INIT, MESSAGE_UPLOAD};
 use crate::common::{CommunicationAgent, QuickTransferError};
 
-use super::directory_description;
+use super::{directory_description, messages::{MkdirAnswer, MESSAGE_MKDIR, MESSAGE_MKDIRANS}};
 use super::messages::{
     CdAnswer, FileFail, UploadResult, MAX_FILE_FRAGMENT_SIZE, MESSAGE_CD, MESSAGE_CDANSWER,
     MESSAGE_DISCONNECT, MESSAGE_DOWNLOAD, MESSAGE_DOWNLOAD_FAIL, MESSAGE_DOWNLOAD_SUCCESS,
@@ -263,6 +263,37 @@ impl CommunicationAgent<'_> {
         upload_success.extend(answer);
 
         self.send_tcp(upload_success.as_slice(), true).await?;
+
+        Ok(())
+    }
+
+    /// Sends an mkdir message: header, name length, name.
+    pub async fn send_mkdir(&mut self, directory_name: &str) -> Result<(), QuickTransferError> {
+        let mut mkdir_message = MESSAGE_MKDIR.as_bytes().to_vec();
+
+        // We assume that usize <= u64:
+        WriteBytesExt::write_u64::<BE>(&mut mkdir_message, directory_name.len().try_into().unwrap())
+            .map_err(|_| QuickTransferError::FatalError)?;
+
+        mkdir_message.extend(directory_name.as_bytes());
+
+        self.send_tcp(mkdir_message.as_slice(), true).await?;
+
+        Ok(())
+    }
+
+    // Send a mkdir answer: header, answer length, answer.
+    pub async fn send_mkdir_answer(&mut self, answer: &MkdirAnswer) -> Result<(), QuickTransferError> {
+        let mut mkdir_answer_message = MESSAGE_MKDIRANS.as_bytes().to_vec();
+        let answer = bincode::serialize(answer).map_err(|_| QuickTransferError::FatalError)?;
+
+        // We assume that usize <= u64:
+        WriteBytesExt::write_u64::<BE>(&mut mkdir_answer_message, answer.len().try_into().unwrap())
+            .map_err(|_| QuickTransferError::FatalError)?;
+
+        mkdir_answer_message.extend(answer);
+
+        self.send_tcp(mkdir_answer_message.as_slice(), true).await?;
 
         Ok(())
     }
