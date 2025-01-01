@@ -2,7 +2,7 @@ use colored::*;
 use rustyline_async::{Readline, ReadlineEvent, SharedWriter};
 use std::{
     fs::{self, File},
-    io::Write,
+    io::{ErrorKind, Write},
     ops::Deref,
     path::{Path, PathBuf},
     sync::{
@@ -18,8 +18,11 @@ use tokio::{
 use crate::common::{
     directory_description,
     messages::{
-        CdAnswer, FileFail, MkdirAnswer, RenameAnswer, MESSAGE_CD, MESSAGE_DISCONNECT,
-        MESSAGE_DOWNLOAD, MESSAGE_INIT, MESSAGE_LS, MESSAGE_MKDIR, MESSAGE_RENAME, MESSAGE_UPLOAD,
+        CdAnswer, FileFail, MkdirAnswer, RemoveAnswer, RenameAnswer, UploadResult, MESSAGE_CD,
+        MESSAGE_CDANSWER, MESSAGE_DISCONNECT, MESSAGE_DOWNLOAD, MESSAGE_DOWNLOAD_FAIL,
+        MESSAGE_INIT, MESSAGE_LS, MESSAGE_MKDIR, MESSAGE_MKDIRANS, MESSAGE_REMOVE,
+        MESSAGE_REMOVE_ANSWER, MESSAGE_RENAME, MESSAGE_RENAME_ANSWER, MESSAGE_UPLOAD,
+        MESSAGE_UPLOAD_RESULT,
     },
     CommunicationAgent, ProgramOptions, ProgramRole, QuickTransferError,
 };
@@ -57,7 +60,7 @@ pub async fn handle_server(program_options: ProgramOptions) -> Result<(), QuickT
             tokio::select! {
                 closed_from_server = rx_disconnected.recv() => {
                     connected_clients.fetch_sub(1, Ordering::Relaxed);
-                    rl.flush().map_err(|_| QuickTransferError::StdoutError)?;
+                    rl.flush().map_err(|_| QuickTransferError::Stdout)?;
 
                     if check_clients_number_and_stop(&connected_clients, &tx_stop, closed_from_server.unwrap())? {
                         return Ok(())
@@ -66,7 +69,7 @@ pub async fn handle_server(program_options: ProgramOptions) -> Result<(), QuickT
                 command = rl.readline() => {
                     match command {
                         Err(err) => {
-                            return Err(QuickTransferError::ReadLineError {
+                            return Err(QuickTransferError::ReadLine {
                                 error: err.to_string(),
                             });
                         }
@@ -95,13 +98,13 @@ pub async fn handle_server(program_options: ProgramOptions) -> Result<(), QuickT
 
                             match command {
                                 Some("clear") => {
-                                    rl.clear().map_err(|_| QuickTransferError::StdoutError)?;
+                                    rl.clear().map_err(|_| QuickTransferError::Stdout)?;
                                 }
                                 Some("exit") | Some("disconnect") | Some("quit") => {
                                     tx_stop.send((false, true)).unwrap();
                                 }
                                 Some("help") => {
-                                    Write::write(&mut writer, user_help.as_bytes()).map_err(|_| QuickTransferError::StdoutError)?;
+                                    Write::write(&mut writer, user_help.as_bytes()).map_err(|_| QuickTransferError::Stdout)?;
                                 }
                                 Some(command) => {
                                     writeln!(
@@ -110,7 +113,7 @@ pub async fn handle_server(program_options: ProgramOptions) -> Result<(), QuickT
                                         "Error: Command `".red(),
                                         command.red(),
                                         "` does not exist!".red(),
-                                    ).map_err(|_| QuickTransferError::StdoutError)?;
+                                    ).map_err(|_| QuickTransferError::Stdout)?;
                                 }
                                 None => {
 
@@ -215,7 +218,7 @@ async fn handle_client_as_a_server(
             .white(),
         ") has connected!".green().bold(),
     )
-    .map_err(|_| QuickTransferError::StdoutError)?;
+    .map_err(|_| QuickTransferError::Stdout)?;
 
     let mut current_path = PathBuf::new();
     current_path.push(&program_options.root_directory);
@@ -247,24 +250,23 @@ async fn handle_client_as_a_server(
                         next_path.push(dir_name);
 
                         if !fs::exists(next_path.as_path()).unwrap_or(false) || !next_path.as_path().is_dir() {
-                            agent.send_cd_answer(&CdAnswer::DirectoryDoesNotExist).await?;
+                            agent.send_answer(MESSAGE_CDANSWER, &CdAnswer::DirectoryDoesNotExist).await?;
                             continue;
                         }
 
                         let next_path = next_path.canonicalize().unwrap();
                         if !next_path.starts_with(root_directory.clone()) || next_path == current_path {
-                            agent.send_cd_answer(&CdAnswer::IllegalDirectory).await?;
+                            agent.send_answer(MESSAGE_CDANSWER, &CdAnswer::IllegalDirectory).await?;
                             continue;
                         }
 
                         current_path = next_path;
 
                         let Ok(directory_contents) = directory_description(&current_path, &root_directory) else {
-                            agent.send_cd_answer(&CdAnswer::ReadingDirectoryError).await?;
-
+                            agent.send_answer(MESSAGE_CDANSWER, &CdAnswer::ReadingDirectoryError).await?;
                             continue;
                         };
-                        agent.send_cd_answer(&CdAnswer::Success(directory_contents)).await?;
+                        agent.send_answer(MESSAGE_CDANSWER, &CdAnswer::Success(directory_contents)).await?;
                     }
                     MESSAGE_LS => {
                         agent.send_directory_description(&current_path, &root_directory).await?;
@@ -275,18 +277,18 @@ async fn handle_client_as_a_server(
                         file_path.push(file_name);
 
                         if !fs::exists(file_path.as_path()).unwrap() || !file_path.as_path().is_file() {
-                            agent.send_download_fail(&FileFail::FileDoesNotExist).await?;
+                            agent.send_answer(MESSAGE_DOWNLOAD_FAIL, &FileFail::FileDoesNotExist).await?;
                             continue;
                         }
 
                         let current = file_path.canonicalize().unwrap();
                         if !current.starts_with(root_directory.clone()) {
-                            agent.send_download_fail(&FileFail::IllegalFile).await?;
+                            agent.send_answer(MESSAGE_DOWNLOAD_FAIL, &FileFail::IllegalFile).await?;
                             continue;
                         }
 
                         let Ok(opened_file) = File::open(&file_path) else {
-                            agent.send_download_fail(&FileFail::ErrorOpeningFile).await?;
+                            agent.send_answer(MESSAGE_DOWNLOAD_FAIL, &FileFail::ErrorOpeningFile).await?;
                             continue;
                         };
 
@@ -308,12 +310,12 @@ async fn handle_client_as_a_server(
                         let mut fail = false;
                         if opened_file.is_err() {
                             fail = true;
-                            agent.send_upload_fail(FileFail::ErrorCreatingFile).await?;
+                            agent.send_answer(MESSAGE_UPLOAD_RESULT, &UploadResult::Fail(FileFail::ErrorCreatingFile)).await?;
                         }
 
                         agent.receive_file(opened_file.unwrap(), file_size, file_path, !fail).await?;
                         if !fail {
-                            agent.send_upload_success().await?;
+                            agent.send_answer(MESSAGE_UPLOAD_RESULT, &UploadResult::Success).await?;
                         }
                     }
                     MESSAGE_MKDIR => {
@@ -322,23 +324,22 @@ async fn handle_client_as_a_server(
                         next_path.push(&directory_name);
 
                         if fs::exists(next_path.as_path()).unwrap() {
-                            agent.send_mkdir_answer(&MkdirAnswer::DirectoryAlreadyExists).await?;
+                            agent.send_answer(MESSAGE_MKDIRANS, &MkdirAnswer::DirectoryAlreadyExists).await?;
                             continue;
                         }
 
                         if !next_path.starts_with(root_directory.clone()) || next_path == current_path {
-                            agent.send_mkdir_answer(&MkdirAnswer::IllegalDirectory).await?;
+                            agent.send_answer(MESSAGE_MKDIRANS, &MkdirAnswer::IllegalDirectory).await?;
                             continue;
                         }
 
 
                         if fs::create_dir(&next_path).is_err() {
-                            agent.send_mkdir_answer(&MkdirAnswer::ErrorCreatingDirectory).await?;
+                            agent.send_answer(MESSAGE_MKDIRANS, &MkdirAnswer::ErrorCreatingDirectory).await?;
                             continue;
                         }
 
-                        agent.send_mkdir_answer(&MkdirAnswer::Success).await?;
-
+                        agent.send_answer(MESSAGE_MKDIRANS, &MkdirAnswer::Success).await?;
                     }
                     MESSAGE_RENAME => {
                         let file_dir_name = agent.receive_length_with_string().await?;
@@ -348,22 +349,56 @@ async fn handle_client_as_a_server(
                         file_path.push(&file_dir_name);
 
                         if !fs::exists(file_path.as_path()).unwrap() {
-                            agent.send_rename_answer(&RenameAnswer::FileDirDoesNotExist).await?;
+                            agent.send_answer(MESSAGE_RENAME_ANSWER, &RenameAnswer::FileDirDoesNotExist).await?;
                             continue;
                         }
 
                         let current = file_path.canonicalize().unwrap();
                         if !current.starts_with(root_directory.clone()) {
-                            agent.send_rename_answer(&RenameAnswer::IllegalFileDir).await?;
+                            agent.send_answer(MESSAGE_RENAME_ANSWER, &RenameAnswer::IllegalFileDir).await?;
                             continue;
                         }
 
                         if fs::rename(&file_path, new_name).is_err() {
-                            agent.send_rename_answer(&RenameAnswer::ErrorRenaming).await?;
+                            agent.send_answer(MESSAGE_RENAME_ANSWER, &RenameAnswer::ErrorRenaming).await?;
                             continue;
                         }
 
-                        agent.send_rename_answer(&RenameAnswer::Success).await?;
+                        agent.send_answer(MESSAGE_RENAME_ANSWER, &RenameAnswer::Success).await?;
+                    }
+                    MESSAGE_REMOVE => {
+                        let file_dir_name = agent.receive_length_with_string().await?;
+
+                        let mut file_path = current_path.to_path_buf();
+                        file_path.push(&file_dir_name);
+
+                        if !fs::exists(file_path.as_path()).unwrap() {
+                            agent.send_answer(MESSAGE_REMOVE_ANSWER, &RemoveAnswer::FileDirDoesNotExist).await?;
+                            continue;
+                        }
+
+                        let current = file_path.canonicalize().unwrap();
+                        if !current.starts_with(root_directory.clone()) {
+                            agent.send_answer(MESSAGE_REMOVE_ANSWER, &RemoveAnswer::IllegalFileDir).await?;
+                            continue;
+                        }
+
+                        if file_path.is_dir() {
+                            if let Err(err) = fs::remove_dir(&file_path) {
+                                if err.kind() == ErrorKind::DirectoryNotEmpty {
+                                    agent.send_answer(MESSAGE_REMOVE_ANSWER, &RemoveAnswer::DirectoryNotEmpty).await?;
+                                } else {
+                                    agent.send_answer(MESSAGE_REMOVE_ANSWER, &RemoveAnswer::ErrorRemoving).await?;
+                                }
+
+                                continue;
+                            }
+                        } else if fs::remove_file(&file_path).is_err() {
+                            agent.send_answer(MESSAGE_REMOVE_ANSWER, &RemoveAnswer::ErrorRemoving).await?;
+                            continue;
+                        }
+
+                        agent.send_answer(MESSAGE_REMOVE_ANSWER, &RemoveAnswer::Success).await?;
                     }
                     MESSAGE_DISCONNECT => {
                         writeln!(
@@ -376,7 +411,7 @@ async fn handle_client_as_a_server(
                                 client_port,
                             ).on_green().white(),
                             ") has disconnected.".green().bold(),
-                        ).map_err(|_| QuickTransferError::StdoutError)?;
+                        ).map_err(|_| QuickTransferError::Stdout)?;
 
                         tx_disconnected.send(false).unwrap();
 
@@ -384,10 +419,14 @@ async fn handle_client_as_a_server(
                     }
                     _ => {
                         eprintln!(
-                            "\n{}{}{}",
-                            "Client `".red(),
-                            client_name.red(),
-                            "` sent an invalid message. Disconnecting...".red(),
+                            "{}{}{}",
+                            "Client (".red(),
+                            format!(
+                                "[{}]:{}",
+                                client_name,
+                                client_port,
+                            ).on_red().white(),
+                            ") sent an invalid message. Disconnecting...".red(),
                         );
 
                         tx_disconnected.send(false).unwrap();

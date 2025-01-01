@@ -1,5 +1,6 @@
 use byteorder::{ReadBytesExt, BE};
 use core::str;
+use serde::de::DeserializeOwned;
 use std::{
     cmp::min,
     fs::File,
@@ -10,14 +11,9 @@ use std::{
 use tokio::{io::AsyncReadExt, time::timeout};
 
 use crate::common::{
-    messages::{
-        CdAnswer, FileFail, MessageDirectoryContents, MkdirAnswer, UploadResult,
-        HEADER_NAME_LENGTH, MAX_FILE_FRAGMENT_SIZE, MESSAGE_LENGTH_LENGTH,
-    },
+    messages::{HEADER_NAME_LENGTH, MAX_FILE_FRAGMENT_SIZE, MESSAGE_LENGTH_LENGTH},
     CommunicationAgent, QuickTransferError,
 };
-
-use super::messages::RenameAnswer;
 
 impl CommunicationAgent<'_> {
     /// Receives exactly this number of bytes to fill the buffer from TCP.
@@ -90,19 +86,6 @@ impl CommunicationAgent<'_> {
         Ok(read_number)
     }
 
-    /// Receives directory description (its size and itself).
-    pub async fn receive_directory_description(
-        &mut self,
-    ) -> Result<MessageDirectoryContents, QuickTransferError> {
-        let description_length: usize = self.receive_message_length().await?.try_into().unwrap();
-        let mut buffer: Vec<u8> = vec![0_u8; description_length];
-        self.receive_tcp(buffer.as_mut_slice()).await?;
-        let deserialized_message: MessageDirectoryContents =
-            bincode::deserialize(&buffer[..]).unwrap();
-
-        Ok(deserialized_message)
-    }
-
     /// Receives a string (reads exactly `string_length` bytes so as to receive it).
     pub async fn receive_string(
         &mut self,
@@ -125,32 +108,12 @@ impl CommunicationAgent<'_> {
         Ok(dir_name)
     }
 
-    /// Receives a CD answer message (only message length and message)
-    pub async fn receive_cd_answer(&mut self) -> Result<CdAnswer, QuickTransferError> {
-        let answer_length: usize = self.receive_message_length().await?.try_into().unwrap();
-        let mut buffer: Vec<u8> = vec![0_u8; answer_length];
-        self.receive_tcp(buffer.as_mut_slice()).await?;
-        let deserialized_message: CdAnswer = bincode::deserialize(&buffer[..]).unwrap();
-
-        Ok(deserialized_message)
-    }
-
     /// Receives a string (its length and itself).
     pub async fn receive_length_with_string(&mut self) -> Result<String, QuickTransferError> {
         let file_name_length = self.receive_message_length().await?;
         let file_name = self.receive_string(file_name_length).await?;
 
         Ok(file_name)
-    }
-
-    /// Receives a download fail message (only its length and message).
-    pub async fn receive_download_fail(&mut self) -> Result<FileFail, QuickTransferError> {
-        let answer_length: usize = self.receive_message_length().await?.try_into().unwrap();
-        let mut buffer: Vec<u8> = vec![0_u8; answer_length];
-        self.receive_tcp(buffer.as_mut_slice()).await?;
-        let deserialized_message: FileFail = bincode::deserialize(&buffer[..]).unwrap();
-
-        Ok(deserialized_message)
     }
 
     /// Receives a file and saves it in blocks (reads `file_size` bytes).
@@ -179,7 +142,7 @@ impl CommunicationAgent<'_> {
                     if try_all {
                         just_receive = true;
                     } else {
-                        return Err(QuickTransferError::ProblemWritingFile {
+                        return Err(QuickTransferError::WritingFile {
                             file_path: String::from(file_path.to_str().unwrap()),
                         });
                     }
@@ -192,32 +155,12 @@ impl CommunicationAgent<'_> {
         Ok(())
     }
 
-    /// Receives upload result (only its length and message).
-    pub async fn receive_upload_result(&mut self) -> Result<UploadResult, QuickTransferError> {
+    /// Receives an answer.
+    pub async fn receive_answer<T: DeserializeOwned>(&mut self) -> Result<T, QuickTransferError> {
         let answer_length: usize = self.receive_message_length().await?.try_into().unwrap();
         let mut buffer: Vec<u8> = vec![0_u8; answer_length];
         self.receive_tcp(buffer.as_mut_slice()).await?;
-        let deserialized_message: UploadResult = bincode::deserialize(&buffer[..]).unwrap();
-
-        Ok(deserialized_message)
-    }
-
-    /// Receives a mkdir answer message (only message length and message)
-    pub async fn receive_mkdir_answer(&mut self) -> Result<MkdirAnswer, QuickTransferError> {
-        let answer_length: usize = self.receive_message_length().await?.try_into().unwrap();
-        let mut buffer: Vec<u8> = vec![0_u8; answer_length];
-        self.receive_tcp(buffer.as_mut_slice()).await?;
-        let deserialized_message: MkdirAnswer = bincode::deserialize(&buffer[..]).unwrap();
-
-        Ok(deserialized_message)
-    }
-
-    /// Receives a rename answer message (only message length and message)
-    pub async fn receive_rename_answer(&mut self) -> Result<RenameAnswer, QuickTransferError> {
-        let answer_length: usize = self.receive_message_length().await?.try_into().unwrap();
-        let mut buffer: Vec<u8> = vec![0_u8; answer_length];
-        self.receive_tcp(buffer.as_mut_slice()).await?;
-        let deserialized_message: RenameAnswer = bincode::deserialize(&buffer[..]).unwrap();
+        let deserialized_message: T = bincode::deserialize(&buffer[..]).unwrap();
 
         Ok(deserialized_message)
     }

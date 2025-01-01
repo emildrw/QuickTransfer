@@ -149,10 +149,10 @@ pub enum QuickTransferError {
     #[error("An error occurred while creating a server. Please try again.")]
     ServerCreation,
 
-    #[error("Couldn't connect to server \"{server_ip}\". Make sure this is a correct address and the server is running QuickTransfer on port {port}.")]
-    CouldntConnectToServer { server_ip: String, port: u16 },
+    #[error("Server \"{server_ip}\" refused the connection. Make sure this is a correct address and the server is running QuickTransfer on port {port}.")]
+    ConnectionRefused { server_ip: String, port: u16 },
 
-    #[error("An error occurred while creating a connection. Please try again.")]
+    #[error("An error occurred while connecting. Please try again.")]
     ConnectionCreation,
 
     #[error("An error occurred while receiving a message from {}.", read_opposite_role(.0, false))]
@@ -174,23 +174,23 @@ pub enum QuickTransferError {
     ReadingDirectoryContents,
 
     #[error("A fatal error has occurred.")]
-    FatalError,
+    Fatal,
 
     #[error("A problem with writing to stdout has occurred.")]
-    StdoutError,
+    Stdout,
 
     #[error("A problem with reading user's input: {error}")]
-    ReadLineError { error: String },
+    ReadLine { error: String },
 
     #[error("A problem with opening file `{file_path}` has occurred.")]
-    ProblemOpeningFile { file_path: String },
+    OpeningFile { file_path: String },
 
     #[error("A problem with reading file `{file_path}` has occurred.")]
-    ProblemReadingFile { file_path: String },
+    ReadingFile { file_path: String },
 
     #[error("A problem with writing file `{file_path}` has occurred.")]
-    ProblemWritingFile { file_path: String },
+    WritingFile { file_path: String },
 
     #[error("")]
-    OtherError,
+    Other,
 }

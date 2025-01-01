@@ -34,6 +34,8 @@ QuickTransfer provides an intuitive input/output system for operating with files
 - `download <file_path>` -- Download the file from `file_path` (relative to current view) to current directory (i.e. on which QuickTransfer has been run). If the file exists, it will be overwritten.
 - `upload <file_path>` -- Upload the file from `file_path` (relative to current directory, i.e. on which QuickTransfer has been run) to directory in current view (overrides files). If the file exists, it will be overwritten.
 - `mkdir <directory_name>` -- Create a new directory in current location.
+- `mv <file_dir_path> <new_name>` --  Rename a file/directory.
+- `rm <file_dir_path>` -- Remove a file/empty directory (recursive removal is not allowed due to security reasons).
 - `exit; disconnect; quit` -- Gracefully disconnect and exit QuickTransfer.
 
 ## Program protocol
@@ -57,6 +59,8 @@ All messages' exchanged within client and server have headers: they are a sequen
 - "MKDIRANS": `| 8B: MKDIR___ | 8B: (length of the answer) | ?B: (answer) |` -- sent by server
 - "RENAME:": `| 8B: RENAME__ | 8B: (length of the file/dir name) | ?B: (name) | 8B: (length of the new name) | ?B: (name) |` -- sent by client
 - "RENAME_ANSWER": `| 8B: RENAMEAN | 8B: (length of the answer) | ?B: (answer) |` -- sent by server
+- "REMOVE": `| 8B: REMOVE__ | 8B: (length of file/dir name) | ?B: (name) |` -- sent by client
+- "REMOVE_ANSWER": `| 8B: REMOVEAN | 8B: (length of the answer) | ?B: (answer) |` -- sent by server
 - "DISCONNECT": `| 8B: DISCONN_ |` -- sent by client
 
 #### Message exchange process
@@ -81,7 +85,10 @@ All messages' exchanged within client and server have headers: they are a sequen
     6. Client sends a RENAME:
         1. Server responds with a RENAME_ANSWER.
         2. Go to step (3).
-    7. Client sends a DISCONNECT:
+    7. Client sends a REMOVE:
+        1. Server responds with a REMOVE_ANSWER.
+        2. Go to step (3).
+    8. Client sends a DISCONNECT:
         1. Server closes the connection and exits.
         2. Client also closes the connection and exits. 
 

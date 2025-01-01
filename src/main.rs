@@ -1,4 +1,5 @@
 use argparse::{ArgumentParser, Store, StoreTrue};
+use colored::*;
 use std::path::Path;
 
 mod client;
@@ -83,18 +84,18 @@ async fn main() {
 
     if let ProgramRole::Server = program_options.program_role {
         if let Err(error) = server::handle_server(program_options).await {
-            if let QuickTransferError::OtherError = error {
+            if let QuickTransferError::Other = error {
             } else {
-                eprintln!("{}", error);
+                eprintln!("\n{}", error.to_string().red());
             }
         }
     } else {
         // program_options.program_role == ProgramRole::Client;
 
         if let Err(error) = client::handle_client(&program_options).await {
-            if let QuickTransferError::OtherError = error {
+            if let QuickTransferError::Other = error {
             } else {
-                eprintln!("{}", error);
+                eprintln!("\n{}", error.to_string().red());
             }
         }
     }

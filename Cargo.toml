@@ -5,6 +5,7 @@ authors = ["Emil Drwięga <emildrw@outlook.com>"]
 description = "QuickTransfer allows you to quickly upload and download files from any computer."
 readme = "README.md"
 edition = "2021"
+rust-version = "1.83.0"
 
 [dependencies]
 argparse = "0.2.2"

@@ -16,12 +16,13 @@ pub const MESSAGE_MKDIRANS: &str = "MKDIRANS";
 pub const MESSAGE_RENAME: &str = "RENAME__";
 pub const MESSAGE_RENAME_ANSWER: &str = "RENAMEAN";
 pub const MESSAGE_DISCONNECT: &str = "DISCONN_";
+pub const MESSAGE_REMOVE: &str = "REMOVE__";
+pub const MESSAGE_REMOVE_ANSWER: &str = "REMOVEAN";
 
 // Constants:
 pub const HEADER_NAME_LENGTH: usize = 8;
 pub const MESSAGE_LENGTH_LENGTH: usize = 8;
 pub const MAX_FILE_FRAGMENT_SIZE: usize = 1024;
-pub const ECONNREFUSED: i32 = 111;
 
 // Messages bodies:
 #[derive(Serialize, Deserialize, PartialEq, Debug)]
@@ -77,5 +78,14 @@ pub enum RenameAnswer {
     FileDirDoesNotExist,
     IllegalFileDir,
     ErrorRenaming,
+    Success,
+}
+
+#[derive(Serialize, Deserialize, PartialEq, Debug)]
+pub enum RemoveAnswer {
+    FileDirDoesNotExist,
+    IllegalFileDir,
+    ErrorRemoving,
+    DirectoryNotEmpty,
     Success,
 }
