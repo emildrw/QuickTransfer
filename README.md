@@ -55,6 +55,8 @@ All messages' exchanged within client and server have headers: they are a sequen
 - "UPLOAD_RESULT": `| 8B: UPLOADRE | 8B: (length of the answer) | ?B: (answer) |`  -- sent by server
 - "MKDIR": `| 8B: MKDIR___ | 8B: (length of the name) | ?B: (name) |` -- sent by client
 - "MKDIRANS": `| 8B: MKDIR___ | 8B: (length of the answer) | ?B: (answer) |` -- sent by server
+- "RENAME:": `| 8B: RENAME__ | 8B: (length of the file/dir name) | ?B: (name) | 8B: (length of the new name) | ?B: (name) |` -- sent by client
+- "RENAME_ANSWER": `| 8B: RENAMEAN | 8B: (length of the answer) | ?B: (answer) |` -- sent by server
 - "DISCONNECT": `| 8B: DISCONN_ |` -- sent by client
 
 #### Message exchange process
@@ -76,7 +78,10 @@ All messages' exchanged within client and server have headers: they are a sequen
     5. Client sends a MKDIR:
         1. Server responds with a MKDIRANS.
         2. Go to step (3).
-    6. Client sends a DISCONNECT:
+    6. Client sends a RENAME:
+        1. Server responds with a RENAME_ANSWER.
+        2. Go to step (3).
+    7. Client sends a DISCONNECT:
         1. Server closes the connection and exits.
         2. Client also closes the connection and exits. 
 

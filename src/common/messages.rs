@@ -13,9 +13,11 @@ pub const MESSAGE_UPLOAD: &str = "UPLOAD__";
 pub const MESSAGE_UPLOAD_RESULT: &str = "UPLOADRE";
 pub const MESSAGE_MKDIR: &str = "MKDIR___";
 pub const MESSAGE_MKDIRANS: &str = "MKDIRANS";
+pub const MESSAGE_RENAME: &str = "RENAME__";
+pub const MESSAGE_RENAME_ANSWER: &str = "RENAMEAN";
 pub const MESSAGE_DISCONNECT: &str = "DISCONN_";
 
-// Constans:
+// Constants:
 pub const HEADER_NAME_LENGTH: usize = 8;
 pub const MESSAGE_LENGTH_LENGTH: usize = 8;
 pub const MAX_FILE_FRAGMENT_SIZE: usize = 1024;
@@ -73,5 +75,13 @@ pub enum UploadResult {
 pub enum MkdirAnswer {
     DirectoryAlreadyExists,
     ErrorCreatingDirectory,
+    Success,
+}
+
+#[derive(Serialize, Deserialize, PartialEq, Debug)]
+pub enum RenameAnswer {
+    FileDirDoesNotExist,
+    IllegalFileDir,
+    ErrorRenaming,
     Success,
 }

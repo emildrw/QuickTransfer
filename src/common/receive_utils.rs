@@ -17,6 +17,8 @@ use crate::common::{
     CommunicationAgent, QuickTransferError,
 };
 
+use super::messages::RenameAnswer;
+
 impl CommunicationAgent<'_> {
     /// Receives exactly this number of bytes to fill the buffer from TCP.
     async fn receive_tcp(&mut self, message_buffer: &mut [u8]) -> Result<(), QuickTransferError> {
@@ -206,6 +208,16 @@ impl CommunicationAgent<'_> {
         let mut buffer: Vec<u8> = vec![0_u8; answer_length];
         self.receive_tcp(buffer.as_mut_slice()).await?;
         let deserialized_message: MkdirAnswer = bincode::deserialize(&buffer[..]).unwrap();
+
+        Ok(deserialized_message)
+    }
+
+    /// Receives a rename answer message (only message length and message)
+    pub async fn receive_rename_answer(&mut self) -> Result<RenameAnswer, QuickTransferError> {
+        let answer_length: usize = self.receive_message_length().await?.try_into().unwrap();
+        let mut buffer: Vec<u8> = vec![0_u8; answer_length];
+        self.receive_tcp(buffer.as_mut_slice()).await?;
+        let deserialized_message: RenameAnswer = bincode::deserialize(&buffer[..]).unwrap();
 
         Ok(deserialized_message)
     }

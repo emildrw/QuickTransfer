@@ -18,8 +18,8 @@ use tokio::{
 use crate::common::{
     directory_description,
     messages::{
-        CdAnswer, FileFail, MkdirAnswer, MESSAGE_CD, MESSAGE_DISCONNECT, MESSAGE_DOWNLOAD,
-        MESSAGE_INIT, MESSAGE_LS, MESSAGE_MKDIR, MESSAGE_UPLOAD,
+        CdAnswer, FileFail, MkdirAnswer, RenameAnswer, MESSAGE_CD, MESSAGE_DISCONNECT,
+        MESSAGE_DOWNLOAD, MESSAGE_INIT, MESSAGE_LS, MESSAGE_MKDIR, MESSAGE_RENAME, MESSAGE_UPLOAD,
     },
     CommunicationAgent, ProgramOptions, ProgramRole, QuickTransferError,
 };
@@ -328,6 +328,31 @@ async fn handle_client_as_a_server(
                         })?;
 
                         agent.send_mkdir_answer(&MkdirAnswer::Success).await?;
+                    }
+                    MESSAGE_RENAME => {
+                        let file_dir_name = agent.receive_length_with_string().await?;
+                        let new_name = agent.receive_length_with_string().await?;
+
+                        let mut file_path = current_path.to_path_buf();
+                        file_path.push(&file_dir_name);
+
+                        if !fs::exists(file_path.as_path()).unwrap() {
+                            agent.send_rename_answer(&RenameAnswer::FileDirDoesNotExist).await?;
+                            continue;
+                        }
+
+                        let current = file_path.canonicalize().unwrap();
+                        if !current.starts_with(root_directory.clone()) {
+                            agent.send_rename_answer(&RenameAnswer::IllegalFileDir).await?;
+                            continue;
+                        }
+
+                        fs::rename(&file_path, new_name).map_err(|_| {
+                            // TODO: change error throwing to a proper response.
+                            QuickTransferError::FatalError
+                        })?;
+
+                        agent.send_rename_answer(&RenameAnswer::Success).await?;
                     }
                     MESSAGE_DISCONNECT => {
                         writeln!(

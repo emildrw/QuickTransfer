@@ -9,9 +9,9 @@ use tokio::net::TcpStream;
 
 use crate::common::{
     messages::{
-        CdAnswer, FileFail, MessageDirectoryContents, MkdirAnswer, UploadResult, ECONNREFUSED,
-        MESSAGE_CDANSWER, MESSAGE_DIR, MESSAGE_DISCONNECT, MESSAGE_DOWNLOAD_FAIL,
-        MESSAGE_DOWNLOAD_SUCCESS, MESSAGE_MKDIRANS, MESSAGE_UPLOAD_RESULT,
+        CdAnswer, FileFail, MessageDirectoryContents, MkdirAnswer, RenameAnswer, UploadResult,
+        ECONNREFUSED, MESSAGE_CDANSWER, MESSAGE_DIR, MESSAGE_DISCONNECT, MESSAGE_DOWNLOAD_FAIL,
+        MESSAGE_DOWNLOAD_SUCCESS, MESSAGE_MKDIRANS, MESSAGE_RENAME_ANSWER, MESSAGE_UPLOAD_RESULT,
     },
     CommunicationAgent, ProgramOptions, ProgramRole, QuickTransferError,
 };
@@ -165,7 +165,7 @@ async fn serve_client(
                                 print_directory_contents(&dir_description, &mut writer)?;
                             }
                             Some("download") => {
-                                let file_name = parse_file_name(input, "download", &mut writer);
+                                let file_name = parse_file_name(input, "download <file_path>", &mut writer);
                                 let Some(file_name) = file_name else {
                                     continue;
                                 };
@@ -230,7 +230,7 @@ async fn serve_client(
                                 }
                             }
                             Some("upload") => {
-                                let file_name = parse_file_name(input, "upload", &mut writer);
+                                let file_name = parse_file_name(input, "upload <file_path>", &mut writer);
                                 let Some(file_name) = file_name else {
                                     continue;
                                 };
@@ -302,8 +302,8 @@ async fn serve_client(
 
                                 agent.send_mkdir(&directory_name).await?;
                                 agent.receive_message_header_check(MESSAGE_MKDIRANS).await?;
-
                                 let mkdir_answer = agent.receive_mkdir_answer().await?;
+
                                 match mkdir_answer {
                                     MkdirAnswer::DirectoryAlreadyExists => {
                                         writeln!(
@@ -329,6 +329,58 @@ async fn serve_client(
                                             writer,
                                             "Successfully created directory `{}`.",
                                             directory_name
+                                        ).map_err(|_| QuickTransferError::StdoutError)?;
+
+                                        agent.send_list_directory().await?;
+                                        agent.receive_message_header_check(MESSAGE_DIR).await?;
+                                        let dir_description = agent.receive_directory_description().await?;
+                                        print_directory_contents(&dir_description, &mut writer)?;
+                                    }
+                                }
+                            }
+                            Some("mv") => {
+                                let Some((file_dir_name, new_name)) = parse_file_dir_name_and_name(input, "mv <file_dir_path> <new_name>", &mut writer) else {
+                                    continue;
+                                };
+
+                                agent.send_rename_request(&file_dir_name, &new_name).await?;
+                                agent.receive_message_header_check(MESSAGE_RENAME_ANSWER).await?;
+                                let rename_answer = agent.receive_rename_answer().await?;
+
+                                match rename_answer {
+                                    RenameAnswer::FileDirDoesNotExist => {
+                                        writeln!(
+                                            writer,
+                                            "{}{}{}",
+                                            "Error: File/directory `".red(),
+                                            file_dir_name.red(),
+                                            "` does not exist!".red(),
+                                        ).map_err(|_| QuickTransferError::StdoutError)?;
+                                    }
+                                    RenameAnswer::IllegalFileDir => {
+                                        writeln!(
+                                            writer,
+                                            "{}{}{}",
+                                            "Error: You don't have access to file/directory `".red(),
+                                            file_dir_name.red(),
+                                            "`!".red(),
+                                        ).map_err(|_| QuickTransferError::StdoutError)?;
+                                    }
+                                    RenameAnswer::ErrorRenaming => {
+                                        writeln!(
+                                            writer,
+                                            "{}{}{}",
+                                            "Error: An error renaming file/directory `".red(),
+                                            file_dir_name.red(),
+                                            "` has occurred.".red(),
+                                        ).map_err(|_| QuickTransferError::StdoutError)?;
+                                    }
+                                    RenameAnswer::Success => {
+                                        writeln!(
+                                            writer,
+                                            "Successfully renamed `{}` to `{}`.",
+                                            file_dir_name,
+                                            new_name
                                         ).map_err(|_| QuickTransferError::StdoutError)?;
 
                                         agent.send_list_directory().await?;
@@ -428,10 +480,9 @@ fn parse_file_name(input: &str, command: &str, writer: &mut SharedWriter) -> Opt
     if file_name.is_none() {
         let _ = writeln!(
             writer,
-            "{}{}{}{}",
+            "{}{}{}",
             "Usage: `".red(),
             command.red(),
-            " <file_path>`. ".red(),
             invalid_file_name_message.red(),
         );
 
@@ -444,7 +495,7 @@ fn parse_file_name(input: &str, command: &str, writer: &mut SharedWriter) -> Opt
         let _ = writeln!(
             writer,
             "{}{}",
-            "Note: `file_name` cannot be empty. ".red(),
+            "Note: `file_path` cannot be empty. ".red(),
             invalid_file_name_message.red(),
         );
 
@@ -452,6 +503,42 @@ fn parse_file_name(input: &str, command: &str, writer: &mut SharedWriter) -> Opt
     }
 
     Some(file_name)
+}
+
+/// Parses file name and second argument returning error, if needed.
+fn parse_file_dir_name_and_name(
+    input: &str,
+    command: &str,
+    writer: &mut SharedWriter,
+) -> Option<(String, String)> {
+    let mut file_name = input.splitn(3, char::is_whitespace);
+    if file_name.next().is_none() {
+        let _ = writeln!(writer, "{}{}", "Usage: `".red(), command.red());
+
+        return None;
+    }
+
+    let file_name1 = String::from(file_name.next().unwrap_or(""));
+    let file_name2 = String::from(file_name.next().unwrap_or(""));
+
+    if file_name1.is_empty() {
+        let _ = writeln!(
+            writer,
+            "{}",
+            "Note: `file_dir_path` should be either the path of a file relative to current view.. "
+                .red(),
+        );
+
+        return None;
+    }
+
+    if file_name2.is_empty() {
+        let _ = writeln!(writer, "{}", "Note: `new_name` cannot be empty. ".red());
+
+        return None;
+    }
+
+    Some((file_name1, file_name2))
 }
 
 /// Pre-prints user help so as not to do it every time.
@@ -482,6 +569,7 @@ fn preprint_user_help(help_msg: &mut String) {
         .push_str("                                 the file exists, it will be overwritten.\n");
     help_msg
         .push_str("  mkdir <directory_name>         Create a new directory in current location.\n");
+    help_msg.push_str("  mv <file_dir_path> <new_name>  Rename a file/directory.\n");
     help_msg.push_str("  clear                          Clear the screen.\n");
 
     help_msg.push_str(

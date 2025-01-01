@@ -17,6 +17,8 @@ use crate::common::{
     CommunicationAgent, QuickTransferError,
 };
 
+use super::messages::{RenameAnswer, MESSAGE_RENAME, MESSAGE_RENAME_ANSWER};
+
 impl CommunicationAgent<'_> {
     /// Send bytes from message over TCP.
     async fn send_tcp(&mut self, message: &[u8], flush: bool) -> Result<(), QuickTransferError> {
@@ -301,6 +303,54 @@ impl CommunicationAgent<'_> {
         mkdir_answer_message.extend(answer);
 
         self.send_tcp(mkdir_answer_message.as_slice(), true).await?;
+
+        Ok(())
+    }
+
+    /// Sends rename request: header, file name length, file name.
+    pub async fn send_rename_request(
+        &mut self,
+        file_name: &str,
+        new_name: &str,
+    ) -> Result<(), QuickTransferError> {
+        let mut rename_message = MESSAGE_RENAME.as_bytes().to_vec();
+
+        // We assume that usize <= u64:
+        WriteBytesExt::write_u64::<BE>(&mut rename_message, file_name.len().try_into().unwrap())
+            .map_err(|_| QuickTransferError::FatalError)?;
+
+        rename_message.extend(file_name.as_bytes());
+
+        // We assume that usize <= u64:
+        WriteBytesExt::write_u64::<BE>(&mut rename_message, new_name.len().try_into().unwrap())
+            .map_err(|_| QuickTransferError::FatalError)?;
+
+        rename_message.extend(new_name.as_bytes());
+
+        self.send_tcp(rename_message.as_slice(), true).await?;
+
+        Ok(())
+    }
+
+    // Send a rename answer: header, answer length, answer.
+    pub async fn send_rename_answer(
+        &mut self,
+        answer: &RenameAnswer,
+    ) -> Result<(), QuickTransferError> {
+        let mut rename_answer_message = MESSAGE_RENAME_ANSWER.as_bytes().to_vec();
+        let answer = bincode::serialize(answer).map_err(|_| QuickTransferError::FatalError)?;
+
+        // We assume that usize <= u64:
+        WriteBytesExt::write_u64::<BE>(
+            &mut rename_answer_message,
+            answer.len().try_into().unwrap(),
+        )
+        .map_err(|_| QuickTransferError::FatalError)?;
+
+        rename_answer_message.extend(answer);
+
+        self.send_tcp(rename_answer_message.as_slice(), true)
+            .await?;
 
         Ok(())
     }
