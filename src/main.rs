@@ -31,7 +31,11 @@ fn parse_arguments() -> Option<ProgramOptions> {
         argument_parser.refer(&mut server_ip_address).add_argument("server's address", Store, "In client mode: address, to which the program should connect (IP/domain name); in server mode: the interface on which the program should listen on (server defaults listens on all interfaces). Argument required.");
         argument_parser.refer(&mut port).add_option(&["-p", "--port"], Store, "In client mode: port, to which the program should connect on the server; in server mode: port, on which the program should listen on. The value should be between 0-65535. Default: `47842`");
         argument_parser.refer(&mut root_directory).add_option(&["-r", "--root"], Store, "Specify, which directory will be the root of filesystem shared with clients (as a server). Default: `./`");
-        argument_parser.refer(&mut timeout).add_option(&["-t", "--timeout"], Store, "Specify timeout (in seconds) for waiting for the whole message. Default: `5`");
+        argument_parser.refer(&mut timeout).add_option(
+            &["-t", "--timeout"],
+            Store,
+            "Specify timeout (in seconds) for waiting for the whole message. Default: `5`",
+        );
 
         parsing_result = argument_parser.parse_args();
     }

@@ -3,14 +3,18 @@ use rustyline_async::{Readline, ReadlineEvent, SharedWriter};
 use std::{
     fs::{self, File},
     io::Write,
-    path::Path,
+    path::{Path, PathBuf},
 };
 use tokio::net::TcpStream;
 
-use crate::common::messages::{
-    CdAnswer, FileFail, MessageDirectoryContents, MkdirAnswer, UploadResult, ECONNREFUSED, MESSAGE_CDANSWER, MESSAGE_DIR, MESSAGE_DISCONNECT, MESSAGE_DOWNLOAD_FAIL, MESSAGE_DOWNLOAD_SUCCESS, MESSAGE_MKDIRANS, MESSAGE_UPLOAD_RESULT
+use crate::common::{
+    messages::{
+        CdAnswer, FileFail, MessageDirectoryContents, MkdirAnswer, UploadResult, ECONNREFUSED,
+        MESSAGE_CDANSWER, MESSAGE_DIR, MESSAGE_DISCONNECT, MESSAGE_DOWNLOAD_FAIL,
+        MESSAGE_DOWNLOAD_SUCCESS, MESSAGE_MKDIRANS, MESSAGE_UPLOAD_RESULT,
+    },
+    CommunicationAgent, ProgramOptions, ProgramRole, QuickTransferError,
 };
-use crate::common::{CommunicationAgent, ProgramOptions, ProgramRole, QuickTransferError};
 
 // This function is a wrapper to catch errors and (try to) gracefully end a connection in all cases.
 pub async fn handle_client(program_options: &ProgramOptions) -> Result<(), QuickTransferError> {
@@ -20,7 +24,8 @@ pub async fn handle_client(program_options: &ProgramOptions) -> Result<(), Quick
     );
 
     let mut stream = connect_to_server(program_options).await?;
-    let mut agent = CommunicationAgent::new(&mut stream, ProgramRole::Client, program_options.timeout);
+    let mut agent =
+        CommunicationAgent::new(&mut stream, ProgramRole::Client, program_options.timeout);
     let result = serve_client(program_options, &mut agent).await;
     if let Ok(client_disconnected) = result {
         if client_disconnected {
@@ -202,14 +207,16 @@ async fn serve_client(
                                         }
                                     }
                                     MESSAGE_DOWNLOAD_SUCCESS => {
-                                        let file_name_truncated = file_name.split("/").last().unwrap_or(&file_name);
+                                        let file_name_truncated = Path::new(&file_name).file_name().map(|string| string.to_str().map(|string| string.to_string())).unwrap_or(Some(file_name.clone())).unwrap_or(file_name.clone());
                                         let file_size = agent.receive_message_length().await?;
-                                        let opened_file = File::create(file_name_truncated).map_err(|_| {
+                                        let mut file_path_to_save = PathBuf::from("./");
+                                        file_path_to_save.push(&file_name_truncated);
+                                        let opened_file = File::create(&file_path_to_save).map_err(|_| {
                                             QuickTransferError::ProblemOpeningFile {
-                                                file_path: String::from(file_name_truncated),
+                                                file_path: String::from(&file_name_truncated),
                                             }
                                         })?;
-                                        let file_path = Path::new(file_name_truncated).canonicalize().unwrap();
+                                        let file_path = Path::new(&file_name_truncated).canonicalize().unwrap();
 
                                         writeln!(writer, "Downloading file `{}`...", file_name_truncated).map_err(|_| QuickTransferError::StdoutError)?;
                                         agent.receive_file(opened_file, file_size, file_path.as_path(), false).await?;
@@ -247,10 +254,10 @@ async fn serve_client(
                                     })?;
 
                                 let file_size = opened_file.metadata().unwrap().len();
-                                let file_name_truncated = file_name.split("/").last().unwrap_or(&file_name);
+                                let file_name_truncated = Path::new(&file_name).file_name().map(|string| string.to_str().map(|string| string.to_string())).unwrap_or(Some(file_name.clone())).unwrap_or(file_name.clone());
 
                                 writeln!(writer, "Uploading file `{}`...", file_name).map_err(|_| QuickTransferError::StdoutError)?;
-                                agent.send_upload(opened_file, file_size, file_name_truncated, file_path).await?;
+                                agent.send_upload(opened_file, file_size, &file_name_truncated, file_path).await?;
                                 agent.receive_message_header_check(MESSAGE_UPLOAD_RESULT).await?;
 
                                 let upload_result = agent.receive_upload_result().await?;
@@ -306,7 +313,7 @@ async fn serve_client(
                                             directory_name.red(),
                                             "` already exists!".red(),
                                         ).map_err(|_| QuickTransferError::StdoutError)?;
-                                    
+
                                     }
                                     MkdirAnswer::ErrorCreatingDirectory => {
                                         writeln!(
@@ -318,7 +325,11 @@ async fn serve_client(
                                         ).map_err(|_| QuickTransferError::StdoutError)?;
                                     }
                                     MkdirAnswer::Success => {
-                                        println!("Successfully created directory `{}`.", directory_name);
+                                        writeln!(
+                                            writer,
+                                            "Successfully created directory `{}`.",
+                                            directory_name
+                                        ).map_err(|_| QuickTransferError::StdoutError)?;
 
                                         agent.send_list_directory().await?;
                                         agent.receive_message_header_check(MESSAGE_DIR).await?;
@@ -326,6 +337,9 @@ async fn serve_client(
                                         print_directory_contents(&dir_description, &mut writer)?;
                                     }
                                 }
+                            }
+                            Some("clear") => {
+                                rl.clear().map_err(|_| QuickTransferError::StdoutError)?;
                             }
                             Some("exit") | Some("disconnect") | Some("quit") => {
                                 return Ok(true);
@@ -466,7 +480,9 @@ fn preprint_user_help(help_msg: &mut String) {
     help_msg.push_str("                                 in current view (overrides files). If\n");
     help_msg
         .push_str("                                 the file exists, it will be overwritten.\n");
-    help_msg.push_str("  mkdir <directory_name>         Create a new directory in current location.\n");
+    help_msg
+        .push_str("  mkdir <directory_name>         Create a new directory in current location.\n");
+    help_msg.push_str("  clear                          Clear the screen.\n");
 
     help_msg.push_str(
         "  exit; disconnect; quit         Gracefully disconnect and exit QuickTransfer.\n",

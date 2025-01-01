@@ -73,7 +73,10 @@ All messages' exchanged within client and server have headers: they are a sequen
     4. Client sends an UPLOAD:
         1. Server sends UPLOAD_RESULT after full upload.
         2. Go to step (3).
-    5. Client sends a DISCONNECT:
+    5. Client sends a MKDIR:
+        1. Server responds with a MKDIRANS.
+        2. Go to step (3).
+    6. Client sends a DISCONNECT:
         1. Server closes the connection and exits.
         2. Client also closes the connection and exits. 
 

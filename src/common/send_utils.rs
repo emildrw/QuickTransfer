@@ -6,14 +6,15 @@ use std::{
 };
 use tokio::io::AsyncWriteExt;
 
-use crate::common::messages::{MESSAGE_DIR, MESSAGE_INIT, MESSAGE_UPLOAD};
-use crate::common::{CommunicationAgent, QuickTransferError};
-
-use super::{directory_description, messages::{MkdirAnswer, MESSAGE_MKDIR, MESSAGE_MKDIRANS}};
-use super::messages::{
-    CdAnswer, FileFail, UploadResult, MAX_FILE_FRAGMENT_SIZE, MESSAGE_CD, MESSAGE_CDANSWER,
-    MESSAGE_DISCONNECT, MESSAGE_DOWNLOAD, MESSAGE_DOWNLOAD_FAIL, MESSAGE_DOWNLOAD_SUCCESS,
-    MESSAGE_LS, MESSAGE_UPLOAD_RESULT,
+use crate::common::{
+    directory_description,
+    messages::{
+        CdAnswer, FileFail, MkdirAnswer, UploadResult, MAX_FILE_FRAGMENT_SIZE, MESSAGE_CD,
+        MESSAGE_CDANSWER, MESSAGE_DIR, MESSAGE_DISCONNECT, MESSAGE_DOWNLOAD, MESSAGE_DOWNLOAD_FAIL,
+        MESSAGE_DOWNLOAD_SUCCESS, MESSAGE_INIT, MESSAGE_LS, MESSAGE_MKDIR, MESSAGE_MKDIRANS,
+        MESSAGE_UPLOAD, MESSAGE_UPLOAD_RESULT,
+    },
+    CommunicationAgent, QuickTransferError,
 };
 
 impl CommunicationAgent<'_> {
@@ -272,8 +273,11 @@ impl CommunicationAgent<'_> {
         let mut mkdir_message = MESSAGE_MKDIR.as_bytes().to_vec();
 
         // We assume that usize <= u64:
-        WriteBytesExt::write_u64::<BE>(&mut mkdir_message, directory_name.len().try_into().unwrap())
-            .map_err(|_| QuickTransferError::FatalError)?;
+        WriteBytesExt::write_u64::<BE>(
+            &mut mkdir_message,
+            directory_name.len().try_into().unwrap(),
+        )
+        .map_err(|_| QuickTransferError::FatalError)?;
 
         mkdir_message.extend(directory_name.as_bytes());
 
@@ -283,7 +287,10 @@ impl CommunicationAgent<'_> {
     }
 
     // Send a mkdir answer: header, answer length, answer.
-    pub async fn send_mkdir_answer(&mut self, answer: &MkdirAnswer) -> Result<(), QuickTransferError> {
+    pub async fn send_mkdir_answer(
+        &mut self,
+        answer: &MkdirAnswer,
+    ) -> Result<(), QuickTransferError> {
         let mut mkdir_answer_message = MESSAGE_MKDIRANS.as_bytes().to_vec();
         let answer = bincode::serialize(answer).map_err(|_| QuickTransferError::FatalError)?;
 

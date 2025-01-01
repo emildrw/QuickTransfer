@@ -53,7 +53,11 @@ pub struct CommunicationAgent<'a> {
 
 impl CommunicationAgent<'_> {
     pub fn new(stream: &mut TcpStream, role: ProgramRole, timeout: u16) -> CommunicationAgent {
-        CommunicationAgent { stream, role, timeout }
+        CommunicationAgent {
+            stream,
+            role,
+            timeout,
+        }
     }
 }
 

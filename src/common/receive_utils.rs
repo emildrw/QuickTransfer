@@ -4,21 +4,26 @@ use std::{
     cmp::min,
     fs::File,
     io::{Cursor, ErrorKind, Write},
-    path::Path, time::Duration,
+    path::Path,
+    time::Duration,
 };
 use tokio::{io::AsyncReadExt, time::timeout};
 
-use super::messages::{CdAnswer, FileFail, MkdirAnswer, UploadResult, MAX_FILE_FRAGMENT_SIZE};
-use crate::common::messages::{
-    MessageDirectoryContents, HEADER_NAME_LENGTH, MESSAGE_LENGTH_LENGTH,
+use crate::common::{
+    messages::{
+        CdAnswer, FileFail, MessageDirectoryContents, MkdirAnswer, UploadResult,
+        HEADER_NAME_LENGTH, MAX_FILE_FRAGMENT_SIZE, MESSAGE_LENGTH_LENGTH,
+    },
+    CommunicationAgent, QuickTransferError,
 };
-use crate::common::{CommunicationAgent, QuickTransferError};
 
 impl CommunicationAgent<'_> {
     /// Receives exactly this number of bytes to fill the buffer from TCP.
     async fn receive_tcp(&mut self, message_buffer: &mut [u8]) -> Result<(), QuickTransferError> {
         // Read first byte:
-        self.stream.read_exact(&mut message_buffer[0..1]).await
+        self.stream
+            .read_exact(&mut message_buffer[0..1])
+            .await
             .map_err(|err| {
                 if let ErrorKind::UnexpectedEof = err.kind() {
                     return QuickTransferError::RemoteClosedConnection(self.role);
@@ -28,8 +33,7 @@ impl CommunicationAgent<'_> {
             })?;
 
         let status = self.stream.read_exact(&mut message_buffer[1..]);
-        
-        match timeout(Duration::from_secs(self.timeout.try_into().unwrap()), status).await {
+        match timeout(Duration::from_secs(self.timeout.into()), status).await {
             Err(_) => {
                 return Err(QuickTransferError::MessageReceiveTimeout(self.role));
             }
@@ -38,7 +42,7 @@ impl CommunicationAgent<'_> {
                     if let ErrorKind::UnexpectedEof = err.kind() {
                         return QuickTransferError::RemoteClosedConnection(self.role);
                     }
-    
+
                     QuickTransferError::MessageReceive(self.role)
                 })?;
             }
@@ -64,7 +68,7 @@ impl CommunicationAgent<'_> {
         message_header: &str,
     ) -> Result<(), QuickTransferError> {
         let received = self.receive_message_header().await?;
-        
+
         if received != message_header {
             Err(QuickTransferError::SentInvalidData(self.role))
         } else {
@@ -196,14 +200,6 @@ impl CommunicationAgent<'_> {
         Ok(deserialized_message)
     }
 
-    /// Receives a mkdir message (only message length and message).
-    pub async fn receive_mkdir(&mut self) -> Result<String, QuickTransferError> {
-        let dir_name_length = self.receive_message_length().await?;
-        let dir_name = self.receive_string(dir_name_length).await?;
-
-        Ok(dir_name)
-    }
-
     /// Receives a mkdir answer message (only message length and message)
     pub async fn receive_mkdir_answer(&mut self) -> Result<MkdirAnswer, QuickTransferError> {
         let answer_length: usize = self.receive_message_length().await?.try_into().unwrap();
@@ -213,5 +209,4 @@ impl CommunicationAgent<'_> {
 
         Ok(deserialized_message)
     }
-
 }

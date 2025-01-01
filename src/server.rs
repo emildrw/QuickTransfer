@@ -15,11 +15,13 @@ use tokio::{
     sync::broadcast::{self, Receiver, Sender},
 };
 
-use crate::common::messages::{
-    CdAnswer, FileFail, MkdirAnswer, MESSAGE_CD, MESSAGE_DISCONNECT, MESSAGE_DOWNLOAD, MESSAGE_INIT, MESSAGE_LS, MESSAGE_MKDIR, MESSAGE_UPLOAD
-};
 use crate::common::{
-    directory_description, CommunicationAgent, ProgramOptions, ProgramRole, QuickTransferError,
+    directory_description,
+    messages::{
+        CdAnswer, FileFail, MkdirAnswer, MESSAGE_CD, MESSAGE_DISCONNECT, MESSAGE_DOWNLOAD,
+        MESSAGE_INIT, MESSAGE_LS, MESSAGE_MKDIR, MESSAGE_UPLOAD,
+    },
+    CommunicationAgent, ProgramOptions, ProgramRole, QuickTransferError,
 };
 
 /// This functions server program run in server mode.
@@ -32,9 +34,10 @@ pub async fn handle_server(program_options: ProgramOptions) -> Result<(), QuickT
     let listener = create_a_listener(&program_options).await?;
     let program_options_arc = Arc::new(program_options);
 
-    // Bool -> true iff stop thread listening for next clients
+    // .0 -> true iff stop thread listening for next clients, .1 -> true iff server was closed from server
     let (tx_stop, mut rx_stop) = broadcast::channel(1);
     let tx_stop2 = tx_stop.clone();
+    // -> true iff server was closed from server
     let (tx_disconnected, mut rx_disconnected) = broadcast::channel(1);
 
     let rl = Readline::new(String::from("QuickTransfer> ")).unwrap();
@@ -52,10 +55,10 @@ pub async fn handle_server(program_options: ProgramOptions) -> Result<(), QuickT
 
         loop {
             tokio::select! {
-                _ = rx_disconnected.recv() => {
+                closed_from_server = rx_disconnected.recv() => {
                     connected_clients.fetch_sub(1, Ordering::Relaxed);
 
-                    if check_clients_number_and_stop(&connected_clients, &tx_stop, true)? {
+                    if check_clients_number_and_stop(&connected_clients, &tx_stop, closed_from_server.unwrap())? {
                         return Ok(())
                     }
                 }
@@ -68,18 +71,18 @@ pub async fn handle_server(program_options: ProgramOptions) -> Result<(), QuickT
                         }
                         Ok(ReadlineEvent::Eof) => {
                             eprintln!("^D");
-                            if check_clients_number_and_stop(&connected_clients, &tx_stop, false)? {
+                            if check_clients_number_and_stop(&connected_clients, &tx_stop, true)? {
                                 return Ok(())
                             } else {
-                                tx_stop.send(false).unwrap();
+                                tx_stop.send((false, true)).unwrap();
                             }
                         }
                         Ok(ReadlineEvent::Interrupted) => {
                             eprintln!("^C");
-                            if check_clients_number_and_stop(&connected_clients, &tx_stop, false)? {
+                            if check_clients_number_and_stop(&connected_clients, &tx_stop, true)? {
                                 return Ok(())
                             } else {
-                                tx_stop.send(false).unwrap();
+                                tx_stop.send((false, true)).unwrap();
                             }
                         }
                         Ok(ReadlineEvent::Line(ref line)) => {
@@ -90,8 +93,11 @@ pub async fn handle_server(program_options: ProgramOptions) -> Result<(), QuickT
                             let command = input_splitted.next();
 
                             match command {
+                                Some("clear") => {
+                                    rl.clear().map_err(|_| QuickTransferError::StdoutError)?;
+                                }
                                 Some("exit") | Some("disconnect") | Some("quit") => {
-                                    tx_stop.send(false).unwrap();
+                                    tx_stop.send((false, true)).unwrap();
                                 }
                                 Some("help") => {
                                     Write::write(&mut writer, user_help.as_bytes()).map_err(|_| QuickTransferError::StdoutError)?;
@@ -120,7 +126,7 @@ pub async fn handle_server(program_options: ProgramOptions) -> Result<(), QuickT
         tokio::select! {
             message = rx_stop.recv() => {
                 let message = message.unwrap();
-                if message {
+                if message.0 {
                     break;
                 }
             }
@@ -136,7 +142,7 @@ pub async fn handle_server(program_options: ProgramOptions) -> Result<(), QuickT
                 tokio::spawn(async move {
                     let result = handle_client_as_a_server(stream, program_options_arc.deref(), tx_disconnected.clone(), rx_stop, &mut writer).await;
                     if let Err(error) = result {
-                        tx_disconnected.send(()).unwrap();
+                        tx_disconnected.send(true).unwrap();
                         eprintln!("{}", error);
                     }
 
@@ -150,14 +156,15 @@ pub async fn handle_server(program_options: ProgramOptions) -> Result<(), QuickT
 }
 
 /// Checks whether there are 0 clients and returns whether the server should be stopped.
-fn check_clients_number_and_stop(connected_clients: &Arc<AtomicUsize>, tx_stop: &Sender<bool>, print_message: bool) -> Result<bool, QuickTransferError> {
+fn check_clients_number_and_stop(
+    connected_clients: &Arc<AtomicUsize>,
+    tx_stop: &Sender<(bool, bool)>,
+    closed_from_server: bool,
+) -> Result<bool, QuickTransferError> {
     if connected_clients.load(Ordering::Relaxed) == 0 {
-        tx_stop.send(true).unwrap();
-        if print_message {
-            println!(
-                "\n{}",
-                "All clients have disconnected.".green().bold(),
-            );
+        tx_stop.send((true, closed_from_server)).unwrap();
+        if !closed_from_server {
+            println!("\n{}", "All clients have disconnected.".green().bold());
         }
 
         return Ok(true);
@@ -184,18 +191,16 @@ async fn create_a_listener(
 async fn handle_client_as_a_server(
     mut stream: TcpStream,
     program_options: &ProgramOptions,
-    tx_disconnected: Sender<()>,
-    mut rx_stop: Receiver<bool>,
+    tx_disconnected: Sender<bool>,
+    mut rx_stop: Receiver<(bool, bool)>,
     writer: &mut SharedWriter,
 ) -> Result<(), QuickTransferError> {
     // The documentation doesn't say, when this functions returns an error, so let's assume that never:
     let client_address = stream.peer_addr().unwrap();
-    let mut agent = CommunicationAgent::new(&mut stream, ProgramRole::Server, program_options.timeout);
+    let mut agent =
+        CommunicationAgent::new(&mut stream, ProgramRole::Server, program_options.timeout);
 
-    let res = agent.receive_message_header_check(MESSAGE_INIT).await;
-    if let Err(xd) = res {
-        return Err(xd);
-    }
+    agent.receive_message_header_check(MESSAGE_INIT).await?;
 
     let client_name = client_address.ip().to_canonical().to_string();
 
@@ -222,9 +227,9 @@ async fn handle_client_as_a_server(
             message = rx_stop.recv() => {
                 let message = message.unwrap();
 
-                if !message {
+                if !message.0 {
                     agent.send_disconnect_message().await?;
-                    tx_disconnected.send(()).unwrap();
+                    tx_disconnected.send(message.1).unwrap();
 
                     return Ok(());
                 }
@@ -237,7 +242,7 @@ async fn handle_client_as_a_server(
                         let mut next_path = current_path.to_path_buf();
                         next_path.push(dir_name);
 
-                        if !fs::exists(next_path.as_path()).unwrap() || !next_path.as_path().is_dir() {
+                        if !fs::exists(next_path.as_path()).unwrap_or(false) || !next_path.as_path().is_dir() {
                             agent.send_cd_answer(&CdAnswer::DirectoryDoesNotExist).await?;
                             continue;
                         }
@@ -286,12 +291,11 @@ async fn handle_client_as_a_server(
                         let file_name = agent.receive_length_with_string().await?;
                         let file_size = agent.receive_message_length().await?;
                         let mut file_path = current_path.to_path_buf();
-                        file_path.push(&file_name);
+                        let file_name_truncated = Path::new(&file_name).file_name().map(|string| string.to_str().map(|string| string.to_string())).unwrap_or(Some(file_name.clone())).unwrap_or(file_name.clone());
+                        file_path.push(&file_name_truncated);
 
-                        let file_name_truncated = file_name.split("/").last().unwrap_or(&file_name);
-
-                        let file_path = Path::new(file_name_truncated);
-                        let opened_file = File::create(file_name_truncated);
+                        let file_path = file_path.as_path();
+                        let opened_file = File::create(file_path);
 
                         let mut fail = false;
                         if opened_file.is_err() {
@@ -336,7 +340,7 @@ async fn handle_client_as_a_server(
 
                         writer.flush().map_err(|_| QuickTransferError::StdoutError)?;
 
-                        tx_disconnected.send(()).unwrap();
+                        tx_disconnected.send(false).unwrap();
 
                         return Ok(());
                     }
@@ -348,7 +352,7 @@ async fn handle_client_as_a_server(
                             "` sent an invalid message. Disconnecting...".red(),
                         );
 
-                        tx_disconnected.send(()).unwrap();
+                        tx_disconnected.send(false).unwrap();
 
                         return Ok(());
                     }
@@ -361,6 +365,7 @@ async fn handle_client_as_a_server(
 /// Pre-prints user help so as not to do it every time.
 fn preprint_user_help(help_msg: &mut String) {
     help_msg.push_str("Available commands:\n");
+    help_msg.push_str("  clear                          Clear the screen.\n");
     help_msg.push_str("  exit; disconnect; quit         Gracefully disconnect all clients\n");
     help_msg.push_str("                                 and exit QuickTransfer.\n");
 }
