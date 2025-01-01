@@ -31,30 +31,22 @@ pub struct DirectoryPosition {
 }
 
 #[derive(Serialize, Deserialize, PartialEq, Debug)]
-pub struct MessageDirectoryContents {
-    location: String,
-    positions: Vec<DirectoryPosition>,
+pub struct DirectoryContents {
+    pub location: String,
+    pub positions: Vec<DirectoryPosition>,
 }
 
-impl MessageDirectoryContents {
-    pub fn new(location: String, positions: Vec<DirectoryPosition>) -> MessageDirectoryContents {
-        MessageDirectoryContents {
-            location,
-            positions,
-        }
-    }
-    pub fn location(&self) -> &String {
-        &self.location
-    }
-    pub fn positions(&self) -> &Vec<DirectoryPosition> {
-        &self.positions
-    }
+#[derive(Serialize, Deserialize, PartialEq, Debug)]
+pub enum MessageDirectoryContents {
+    ReadingDirectoryError,
+    Success(DirectoryContents),
 }
 
 #[derive(Serialize, Deserialize, PartialEq, Debug)]
 pub enum CdAnswer {
     DirectoryDoesNotExist,
     IllegalDirectory,
+    ReadingDirectoryError,
     Success(MessageDirectoryContents),
 }
 
@@ -62,6 +54,7 @@ pub enum CdAnswer {
 pub enum FileFail {
     FileDoesNotExist,
     IllegalFile,
+    ErrorOpeningFile,
     ErrorCreatingFile,
 }
 
@@ -75,6 +68,7 @@ pub enum UploadResult {
 pub enum MkdirAnswer {
     DirectoryAlreadyExists,
     ErrorCreatingDirectory,
+    IllegalDirectory,
     Success,
 }
 

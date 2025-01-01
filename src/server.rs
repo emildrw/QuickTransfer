@@ -57,6 +57,7 @@ pub async fn handle_server(program_options: ProgramOptions) -> Result<(), QuickT
             tokio::select! {
                 closed_from_server = rx_disconnected.recv() => {
                     connected_clients.fetch_sub(1, Ordering::Relaxed);
+                    rl.flush().map_err(|_| QuickTransferError::StdoutError)?;
 
                     if check_clients_number_and_stop(&connected_clients, &tx_stop, closed_from_server.unwrap())? {
                         return Ok(())
@@ -164,7 +165,7 @@ fn check_clients_number_and_stop(
     if connected_clients.load(Ordering::Relaxed) == 0 {
         tx_stop.send((true, closed_from_server)).unwrap();
         if !closed_from_server {
-            println!("\n{}", "All clients have disconnected.".green().bold());
+            println!("{}", "All clients have disconnected.".green().bold());
         }
 
         return Ok(true);
@@ -203,12 +204,15 @@ async fn handle_client_as_a_server(
     agent.receive_message_header_check(MESSAGE_INIT).await?;
 
     let client_name = client_address.ip().to_canonical().to_string();
+    let client_port = client_address.port();
 
     writeln!(
         writer,
         "{}{}{}",
         "A new client (".green().bold(),
-        client_name.on_green().white(),
+        format!("[{}]:{}", client_name, client_port,)
+            .on_green()
+            .white(),
         ") has connected!".green().bold(),
     )
     .map_err(|_| QuickTransferError::StdoutError)?;
@@ -255,7 +259,11 @@ async fn handle_client_as_a_server(
 
                         current_path = next_path;
 
-                        let directory_contents = directory_description(&current_path, &root_directory)?;
+                        let Ok(directory_contents) = directory_description(&current_path, &root_directory) else {
+                            agent.send_cd_answer(&CdAnswer::ReadingDirectoryError).await?;
+
+                            continue;
+                        };
                         agent.send_cd_answer(&CdAnswer::Success(directory_contents)).await?;
                     }
                     MESSAGE_LS => {
@@ -277,10 +285,10 @@ async fn handle_client_as_a_server(
                             continue;
                         }
 
-                        let opened_file =
-                            File::open(&file_path).map_err(|_| QuickTransferError::ProblemOpeningFile {
-                                file_path: String::from(file_path.to_str().unwrap()),
-                            })?;
+                        let Ok(opened_file) = File::open(&file_path) else {
+                            agent.send_download_fail(&FileFail::ErrorOpeningFile).await?;
+                            continue;
+                        };
 
                         let file_size = opened_file.metadata().unwrap().len();
                         agent.send_download_success(file_size).await?;
@@ -319,15 +327,18 @@ async fn handle_client_as_a_server(
                         }
 
                         if !next_path.starts_with(root_directory.clone()) || next_path == current_path {
+                            agent.send_mkdir_answer(&MkdirAnswer::IllegalDirectory).await?;
+                            continue;
+                        }
+
+
+                        if fs::create_dir(&next_path).is_err() {
                             agent.send_mkdir_answer(&MkdirAnswer::ErrorCreatingDirectory).await?;
                             continue;
                         }
 
-                        fs::create_dir(&next_path).map_err(|_| QuickTransferError::ProblemCreatingDirectory {
-                            directory_name
-                        })?;
-
                         agent.send_mkdir_answer(&MkdirAnswer::Success).await?;
+
                     }
                     MESSAGE_RENAME => {
                         let file_dir_name = agent.receive_length_with_string().await?;
@@ -347,10 +358,10 @@ async fn handle_client_as_a_server(
                             continue;
                         }
 
-                        fs::rename(&file_path, new_name).map_err(|_| {
-                            // TODO: change error throwing to a proper response.
-                            QuickTransferError::FatalError
-                        })?;
+                        if fs::rename(&file_path, new_name).is_err() {
+                            agent.send_rename_answer(&RenameAnswer::ErrorRenaming).await?;
+                            continue;
+                        }
 
                         agent.send_rename_answer(&RenameAnswer::Success).await?;
                     }
@@ -359,11 +370,13 @@ async fn handle_client_as_a_server(
                             writer,
                             "{}{}{}",
                             "Client (".green().bold(),
-                            client_name.on_green().white(),
+                            format!(
+                                "[{}]:{}",
+                                client_name,
+                                client_port,
+                            ).on_green().white(),
                             ") has disconnected.".green().bold(),
                         ).map_err(|_| QuickTransferError::StdoutError)?;
-
-                        writer.flush().map_err(|_| QuickTransferError::StdoutError)?;
 
                         tx_disconnected.send(false).unwrap();
 

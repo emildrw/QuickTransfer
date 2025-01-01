@@ -1,5 +1,5 @@
 use core::fmt;
-use messages::{DirectoryPosition, MessageDirectoryContents};
+use messages::{DirectoryContents, DirectoryPosition, MessageDirectoryContents};
 use std::{
     fs::{self, DirEntry},
     path::Path,
@@ -102,9 +102,9 @@ pub fn directory_description(
     let mut error_loading_contents = false;
 
     let directory_path_name = path_displayed;
-    let directory_contents = MessageDirectoryContents::new(
-        directory_path_name,
-        directory_contents
+    let directory_contents = MessageDirectoryContents::Success(DirectoryContents {
+        location: directory_path_name,
+        positions: directory_contents
             .into_iter()
             .map(|dir| dir.unwrap().path())
             .map(|path: std::path::PathBuf| {
@@ -134,7 +134,7 @@ pub fn directory_description(
                 }
             })
             .collect(),
-    );
+    });
 
     if error_loading_contents {
         return Err(QuickTransferError::ReadingDirectoryContents);
@@ -191,6 +191,6 @@ pub enum QuickTransferError {
     #[error("A problem with writing file `{file_path}` has occurred.")]
     ProblemWritingFile { file_path: String },
 
-    #[error("A problem with creating a directory `{directory_name}` has occurred.")]
-    ProblemCreatingDirectory { directory_name: String },
+    #[error("")]
+    OtherError,
 }

@@ -86,7 +86,7 @@ All messages' exchanged within client and server have headers: they are a sequen
         2. Client also closes the connection and exits. 
 
 ### Important notes
-- **If a file to be downloaded/uploaded already exist, it'll be overridden.**
+- **If a file to be downloaded/uploaded already exists, it'll be overridden.**
 - If QuickTransfer doesn't have rights to modify/write a file, then an error occurs:
     - It that was the server: it sends a DOWNLOAD_FAIL to the client
     - It was the client: program tries to send a DISCONNECT message **and disconnects**.

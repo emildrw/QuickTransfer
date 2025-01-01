@@ -9,9 +9,10 @@ use tokio::net::TcpStream;
 
 use crate::common::{
     messages::{
-        CdAnswer, FileFail, MessageDirectoryContents, MkdirAnswer, RenameAnswer, UploadResult,
-        ECONNREFUSED, MESSAGE_CDANSWER, MESSAGE_DIR, MESSAGE_DISCONNECT, MESSAGE_DOWNLOAD_FAIL,
-        MESSAGE_DOWNLOAD_SUCCESS, MESSAGE_MKDIRANS, MESSAGE_RENAME_ANSWER, MESSAGE_UPLOAD_RESULT,
+        CdAnswer, DirectoryContents, FileFail, MessageDirectoryContents, MkdirAnswer, RenameAnswer,
+        UploadResult, ECONNREFUSED, MESSAGE_CDANSWER, MESSAGE_DIR, MESSAGE_DISCONNECT,
+        MESSAGE_DOWNLOAD_FAIL, MESSAGE_DOWNLOAD_SUCCESS, MESSAGE_MKDIRANS, MESSAGE_RENAME_ANSWER,
+        MESSAGE_UPLOAD_RESULT,
     },
     CommunicationAgent, ProgramOptions, ProgramRole, QuickTransferError,
 };
@@ -55,8 +56,22 @@ async fn serve_client(
     let mut writer = rl.1;
     let mut rl = rl.0;
 
-    let dir_description = agent.receive_directory_description().await?;
-    print_directory_contents(&dir_description, &mut writer)?;
+    if let Ok(dir_description) = agent.receive_directory_description().await {
+        if let MessageDirectoryContents::Success(dir_description) = &dir_description {
+            print_directory_contents(dir_description, &mut writer)?;
+        }
+    } else {
+        writeln!(
+            writer,
+            "{}{}{}",
+            "Error: An error in reading contents of `".red(),
+            program_options.root_directory.clone().red(),
+            "` occurred.".red(),
+        )
+        .map_err(|_| QuickTransferError::StdoutError)?;
+
+        return Err(QuickTransferError::OtherError);
+    }
 
     // Pre-print user help:
     let mut user_help = String::new();
@@ -139,6 +154,15 @@ async fn serve_client(
                                             "` does not exist!".red(),
                                         ).map_err(|_| QuickTransferError::StdoutError)?;
                                     }
+                                    CdAnswer::ReadingDirectoryError => {
+                                        writeln!(
+                                            writer,
+                                            "{}{}{}",
+                                            "Error: An error in reading contents of `".red(),
+                                            directory_name.red(),
+                                            "` occurred.".red(),
+                                        ).map_err(|_| QuickTransferError::StdoutError)?;
+                                    }
                                     CdAnswer::IllegalDirectory => {
                                         writeln!(
                                             writer,
@@ -149,7 +173,9 @@ async fn serve_client(
                                         ).map_err(|_| QuickTransferError::StdoutError)?;
                                     }
                                     CdAnswer::Success(dir_description) => {
-                                        print_directory_contents(&dir_description, &mut writer)?;
+                                        if let MessageDirectoryContents::Success(dir_description) = dir_description {
+                                            print_directory_contents(&dir_description, &mut writer)?;
+                                        }
                                     }
                                 }
                             }
@@ -162,7 +188,15 @@ async fn serve_client(
                                 agent.send_list_directory().await?;
                                 agent.receive_message_header_check(MESSAGE_DIR).await?;
                                 let dir_description = agent.receive_directory_description().await?;
-                                print_directory_contents(&dir_description, &mut writer)?;
+                                if let MessageDirectoryContents::Success(dir_description) = dir_description {
+                                    print_directory_contents(&dir_description, &mut writer)?;
+                                } else {
+                                    writeln!(
+                                        writer,
+                                        "{}",
+                                        "Error: An error in reading contents of the directory occurred.".red(),
+                                    ).map_err(|_| QuickTransferError::StdoutError)?;
+                                }
                             }
                             Some("download") => {
                                 let file_name = parse_file_name(input, "download <file_path>", &mut writer);
@@ -192,7 +226,16 @@ async fn serve_client(
                                                     "{}{}{}",
                                                     "Error: You don't have access to file `".red(),
                                                     file_name.red(),
-                                                    "{}`!".red(),
+                                                    "`!".red(),
+                                                ).map_err(|_| QuickTransferError::StdoutError)?;
+                                            }
+                                            FileFail::ErrorOpeningFile => {
+                                                writeln!(
+                                                    writer,
+                                                    "{}{}{}",
+                                                    "Error: Error opening file `".red(),
+                                                    file_name.red(),
+                                                    "`!".red(),
                                                 ).map_err(|_| QuickTransferError::StdoutError)?;
                                             }
                                             FileFail::ErrorCreatingFile => {
@@ -201,7 +244,7 @@ async fn serve_client(
                                                     "{}{}{}",
                                                     "Error: Error creating file `".red(),
                                                     file_name.red(),
-                                                    "{}`!".red(),
+                                                    "`!".red(),
                                                 ).map_err(|_| QuickTransferError::StdoutError)?;
                                             }
                                         }
@@ -219,7 +262,20 @@ async fn serve_client(
                                         let file_path = Path::new(&file_name_truncated).canonicalize().unwrap();
 
                                         writeln!(writer, "Downloading file `{}`...", file_name_truncated).map_err(|_| QuickTransferError::StdoutError)?;
-                                        agent.receive_file(opened_file, file_size, file_path.as_path(), false).await?;
+                                        if let Err(error) = agent.receive_file(opened_file, file_size, file_path.as_path(), false).await {
+                                            if let QuickTransferError::ProblemWritingFile{file_path} = error {
+                                                writeln!(
+                                                    writer,
+                                                    "{}{}{}",
+                                                    "Error: Error saving file `".red(),
+                                                    file_path.red(),
+                                                    "`.".red(),
+                                                ).map_err(|_| QuickTransferError::StdoutError)?;
+                                                continue;
+                                            } else {
+                                                return Err(error);
+                                            }
+                                        }
                                         writeln!(writer, "Successfully downloaded file `{}`!", file_name_truncated).map_err(|_| QuickTransferError::StdoutError)?;
                                     }
                                     &_ => {
@@ -248,16 +304,33 @@ async fn serve_client(
                                     continue;
                                 }
 
-                                let opened_file =
-                                    File::open(file_path).map_err(|_| QuickTransferError::ProblemOpeningFile {
-                                        file_path: String::from(file_path.to_str().unwrap()),
-                                    })?;
+                                let Ok(opened_file) = File::open(file_path) else {
+                                    writeln!(
+                                        writer,
+                                        "{}{}{}",
+                                        "Error opening file `".red(),
+                                        file_name.red(),
+                                        "`.".red(),
+                                    ).map_err(|_| QuickTransferError::StdoutError)?;
 
-                                let file_size = opened_file.metadata().unwrap().len();
+                                    continue;
+                                };
+
+                                let Ok(file_size) = opened_file.metadata() else {
+                                    writeln!(
+                                        writer,
+                                        "{}{}{}",
+                                        "Error reading size of file `".red(),
+                                        file_name.red(),
+                                        "`.".red(),
+                                    ).map_err(|_| QuickTransferError::StdoutError)?;
+
+                                    continue;
+                                };
                                 let file_name_truncated = Path::new(&file_name).file_name().map(|string| string.to_str().map(|string| string.to_string())).unwrap_or(Some(file_name.clone())).unwrap_or(file_name.clone());
 
                                 writeln!(writer, "Uploading file `{}`...", file_name).map_err(|_| QuickTransferError::StdoutError)?;
-                                agent.send_upload(opened_file, file_size, &file_name_truncated, file_path).await?;
+                                agent.send_upload(opened_file, file_size.len(), &file_name_truncated, file_path).await?;
                                 agent.receive_message_header_check(MESSAGE_UPLOAD_RESULT).await?;
 
                                 let upload_result = agent.receive_upload_result().await?;
@@ -315,6 +388,15 @@ async fn serve_client(
                                         ).map_err(|_| QuickTransferError::StdoutError)?;
 
                                     }
+                                    MkdirAnswer::IllegalDirectory => {
+                                        writeln!(
+                                            writer,
+                                            "{}{}{}",
+                                            "Error: You don't have access to directory `".red(),
+                                            directory_name.red(),
+                                            "`!".red(),
+                                        ).map_err(|_| QuickTransferError::StdoutError)?;
+                                    }
                                     MkdirAnswer::ErrorCreatingDirectory => {
                                         writeln!(
                                             writer,
@@ -334,7 +416,9 @@ async fn serve_client(
                                         agent.send_list_directory().await?;
                                         agent.receive_message_header_check(MESSAGE_DIR).await?;
                                         let dir_description = agent.receive_directory_description().await?;
-                                        print_directory_contents(&dir_description, &mut writer)?;
+                                        if let MessageDirectoryContents::Success(dir_description) = dir_description {
+                                            print_directory_contents(&dir_description, &mut writer)?;
+                                        }
                                     }
                                 }
                             }
@@ -386,7 +470,9 @@ async fn serve_client(
                                         agent.send_list_directory().await?;
                                         agent.receive_message_header_check(MESSAGE_DIR).await?;
                                         let dir_description = agent.receive_directory_description().await?;
-                                        print_directory_contents(&dir_description, &mut writer)?;
+                                        if let MessageDirectoryContents::Success(dir_description) = dir_description {
+                                            print_directory_contents(&dir_description, &mut writer)?;
+                                        }
                                     }
                                 }
                             }
@@ -442,19 +528,19 @@ async fn connect_to_server(
 }
 
 fn print_directory_contents(
-    dir_description: &MessageDirectoryContents,
+    dir_description: &DirectoryContents,
     writer: &mut SharedWriter,
 ) -> Result<(), QuickTransferError> {
     writeln!(
         writer,
         "{}{}{}",
         "Displaying contents of ".magenta(),
-        dir_description.location().on_magenta().white(),
+        dir_description.location.on_magenta().white(),
         ":".magenta()
     )
     .map_err(|_| QuickTransferError::StdoutError)?;
 
-    for position in dir_description.positions() {
+    for position in &dir_description.positions {
         if position.is_directory {
             write!(writer, "{}    ", position.name.bright_blue())
                 .map_err(|_| QuickTransferError::StdoutError)?;
@@ -463,7 +549,7 @@ fn print_directory_contents(
                 .map_err(|_| QuickTransferError::StdoutError)?;
         }
     }
-    if dir_description.positions().is_empty() {
+    if dir_description.positions.is_empty() {
         write!(writer, "(empty)").map_err(|_| QuickTransferError::StdoutError)?;
     }
     writeln!(writer).map_err(|_| QuickTransferError::StdoutError)?;

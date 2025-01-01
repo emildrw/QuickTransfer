@@ -17,7 +17,9 @@ use crate::common::{
     CommunicationAgent, QuickTransferError,
 };
 
-use super::messages::{RenameAnswer, MESSAGE_RENAME, MESSAGE_RENAME_ANSWER};
+use super::messages::{
+    MessageDirectoryContents, RenameAnswer, MESSAGE_RENAME, MESSAGE_RENAME_ANSWER,
+};
 
 impl CommunicationAgent<'_> {
     /// Send bytes from message over TCP.
@@ -53,12 +55,14 @@ impl CommunicationAgent<'_> {
         directory_path: &Path,
         root_directory_path: &Path,
     ) -> Result<(), QuickTransferError> {
-        let directory_contents = directory_description(directory_path, root_directory_path)?;
+        let directory_contents = directory_description(directory_path, root_directory_path);
 
         let mut dir_message = MESSAGE_DIR.as_bytes().to_vec();
 
-        let dir_description = bincode::serialize(&directory_contents)
-            .map_err(|_| QuickTransferError::ReadingDirectoryContents)?;
+        let dir_description = bincode::serialize(
+            &directory_contents.unwrap_or(MessageDirectoryContents::ReadingDirectoryError),
+        )
+        .map_err(|_| QuickTransferError::ReadingDirectoryContents)?;
 
         // We assume that usize <= u64:
         WriteBytesExt::write_u64::<BE>(&mut dir_message, dir_description.len().try_into().unwrap())

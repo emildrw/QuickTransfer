@@ -5,7 +5,7 @@ mod client;
 mod common;
 mod server;
 
-use common::{ProgramOptions, ProgramRole, DEFAULT_PORT, DEFAULT_TIMEOUT};
+use common::{ProgramOptions, ProgramRole, QuickTransferError, DEFAULT_PORT, DEFAULT_TIMEOUT};
 
 /// Parses program arguments.
 fn parse_arguments() -> Option<ProgramOptions> {
@@ -83,13 +83,19 @@ async fn main() {
 
     if let ProgramRole::Server = program_options.program_role {
         if let Err(error) = server::handle_server(program_options).await {
-            eprintln!("{}", error);
+            if let QuickTransferError::OtherError = error {
+            } else {
+                eprintln!("{}", error);
+            }
         }
     } else {
         // program_options.program_role == ProgramRole::Client;
 
         if let Err(error) = client::handle_client(&program_options).await {
-            eprintln!("{}", error);
+            if let QuickTransferError::OtherError = error {
+            } else {
+                eprintln!("{}", error);
+            }
         }
     }
 }
