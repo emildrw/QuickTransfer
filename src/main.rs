@@ -99,4 +99,8 @@ async fn main() {
             }
         }
     }
+
+    if !cfg!(windows) {
+        println!("");
+    }
 }

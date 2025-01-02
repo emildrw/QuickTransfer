@@ -78,7 +78,7 @@ async fn serve_client(
 
     loop {
         tokio::select! {
-            header_received = agent.receive_message_header() => {
+            header_received = agent.receive_message_header(true) => {
                 let header_received = header_received?;
                 if header_received.as_str() == MESSAGE_DISCONNECT {
                     println!(
@@ -204,7 +204,7 @@ async fn serve_client(
                                 };
 
                                 agent.send_download_request(&file_name).await?;
-                                let header_received = agent.receive_message_header().await?;
+                                let header_received = agent.receive_message_header(false).await?;
 
                                 match header_received.as_str() {
                                     MESSAGE_DOWNLOAD_FAIL => {
@@ -250,7 +250,7 @@ async fn serve_client(
                                     }
                                     MESSAGE_DOWNLOAD_SUCCESS => {
                                         let file_name_truncated = Path::new(&file_name).file_name().map(|string| string.to_str().map(|string| string.to_string())).unwrap_or(Some(file_name.clone())).unwrap_or(file_name.clone());
-                                        let file_size = agent.receive_message_length().await?;
+                                        let file_size = agent.receive_u64().await?;
                                         let mut file_path_to_save = PathBuf::from("./");
                                         file_path_to_save.push(&file_name_truncated);
                                         let opened_file = File::create(&file_path_to_save).map_err(|_| {

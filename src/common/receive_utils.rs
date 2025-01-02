@@ -17,9 +17,11 @@ use crate::common::{
 
 impl CommunicationAgent<'_> {
     /// Receives exactly this number of bytes to fill the buffer from TCP.
-    async fn receive_tcp(&mut self, message_buffer: &mut [u8]) -> Result<(), QuickTransferError> {
-        // Read first byte:
-        self.stream
+    /// If wait == true, then timeout for the first byte is not set.
+    async fn receive_tcp(&mut self, message_buffer: &mut [u8], wait: bool) -> Result<(), QuickTransferError> {
+        if wait {
+            // Read first byte:
+            self.stream
             .read_exact(&mut message_buffer[0..1])
             .await
             .map_err(|err| {
@@ -29,8 +31,14 @@ impl CommunicationAgent<'_> {
 
                 QuickTransferError::MessageReceive(self.role)
             })?;
+        }
 
-        let status = self.stream.read_exact(&mut message_buffer[1..]);
+        let status = if wait {
+            self.stream.read_exact(&mut message_buffer[1..])
+        } else {
+            self.stream.read_exact(message_buffer)
+        };
+        
         match timeout(Duration::from_secs(self.timeout.into()), status).await {
             Err(_) => {
                 return Err(QuickTransferError::MessageReceiveTimeout(self.role));
@@ -49,11 +57,11 @@ impl CommunicationAgent<'_> {
         Ok(())
     }
 
-    /// Receives a message header (takes 8 bytes).
-    pub async fn receive_message_header(&mut self) -> Result<String, QuickTransferError> {
+    /// Receives the message header (takes 8 bytes).
+    pub async fn receive_message_header(&mut self, wait: bool) -> Result<String, QuickTransferError> {
         let mut buffer = [0_u8; HEADER_NAME_LENGTH];
 
-        self.receive_tcp(&mut buffer).await?;
+        self.receive_tcp(&mut buffer, wait).await?;
         let header_received =
             str::from_utf8(&buffer).map_err(|_| QuickTransferError::SentInvalidData(self.role))?;
 
@@ -65,7 +73,7 @@ impl CommunicationAgent<'_> {
         &mut self,
         message_header: &str,
     ) -> Result<(), QuickTransferError> {
-        let received = self.receive_message_header().await?;
+        let received = self.receive_message_header(false).await?;
 
         if received != message_header {
             Err(QuickTransferError::SentInvalidData(self.role))
@@ -74,11 +82,11 @@ impl CommunicationAgent<'_> {
         }
     }
 
-    /// Receives representing length of a message (string length, answer length, file size) (takes 8 bytes).
-    pub async fn receive_message_length(&mut self) -> Result<u64, QuickTransferError> {
+    /// Receives a big-endian representation of a number (message length/file size/string size etc.) (takes 8 bytes).
+    pub async fn receive_u64(&mut self) -> Result<u64, QuickTransferError> {
         let mut buffer = [0_u8; MESSAGE_LENGTH_LENGTH];
 
-        self.receive_tcp(&mut buffer).await?;
+        self.receive_tcp(&mut buffer, false).await?;
 
         let read_number = ReadBytesExt::read_u64::<BE>(&mut Cursor::new(buffer.to_vec()))
             .map_err(|_| QuickTransferError::SentInvalidData(self.role))?;
@@ -93,7 +101,7 @@ impl CommunicationAgent<'_> {
     ) -> Result<String, QuickTransferError> {
         let string_length: usize = string_length.try_into().unwrap();
         let mut buffer: Vec<u8> = vec![0_u8; string_length];
-        self.receive_tcp(buffer.as_mut_slice()).await?;
+        self.receive_tcp(buffer.as_mut_slice(), false).await?;
         let string = String::from_utf8(buffer)
             .map_err(|_| QuickTransferError::SentInvalidData(self.role))?;
 
@@ -102,7 +110,7 @@ impl CommunicationAgent<'_> {
 
     /// Receives a CD message (only message length and message).
     pub async fn receive_cd_message(&mut self) -> Result<String, QuickTransferError> {
-        let dir_name_length = self.receive_message_length().await?;
+        let dir_name_length = self.receive_u64().await?;
         let dir_name = self.receive_string(dir_name_length).await?;
 
         Ok(dir_name)
@@ -110,7 +118,7 @@ impl CommunicationAgent<'_> {
 
     /// Receives a string (its length and itself).
     pub async fn receive_length_with_string(&mut self) -> Result<String, QuickTransferError> {
-        let file_name_length = self.receive_message_length().await?;
+        let file_name_length = self.receive_u64().await?;
         let file_name = self.receive_string(file_name_length).await?;
 
         Ok(file_name)
@@ -135,7 +143,7 @@ impl CommunicationAgent<'_> {
             );
             let now_receive_bytes: usize = now_receive_bytes_u64.try_into().unwrap();
 
-            self.receive_tcp(&mut buffer[..now_receive_bytes]).await?;
+            self.receive_tcp(&mut buffer[..now_receive_bytes], false).await?;
             if !just_receive {
                 let file_write_result = file.write_all(&buffer[..now_receive_bytes]);
                 if file_write_result.is_err() {
@@ -157,9 +165,9 @@ impl CommunicationAgent<'_> {
 
     /// Receives an answer.
     pub async fn receive_answer<T: DeserializeOwned>(&mut self) -> Result<T, QuickTransferError> {
-        let answer_length: usize = self.receive_message_length().await?.try_into().unwrap();
+        let answer_length: usize = self.receive_u64().await?.try_into().unwrap();
         let mut buffer: Vec<u8> = vec![0_u8; answer_length];
-        self.receive_tcp(buffer.as_mut_slice()).await?;
+        self.receive_tcp(buffer.as_mut_slice(), false).await?;
         let deserialized_message: T = bincode::deserialize(&buffer[..]).unwrap();
 
         Ok(deserialized_message)

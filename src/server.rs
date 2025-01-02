@@ -241,7 +241,7 @@ async fn handle_client_as_a_server(
                     return Ok(());
                 }
             }
-            header_received = agent.receive_message_header() => {
+            header_received = agent.receive_message_header(true) => {
                 let header_received = header_received?;
                 match header_received.as_str() {
                     MESSAGE_CD => {
@@ -299,7 +299,7 @@ async fn handle_client_as_a_server(
                     }
                     MESSAGE_UPLOAD => {
                         let file_name = agent.receive_length_with_string().await?;
-                        let file_size = agent.receive_message_length().await?;
+                        let file_size = agent.receive_u64().await?;
                         let mut file_path = current_path.to_path_buf();
                         let file_name_truncated = Path::new(&file_name).file_name().map(|string| string.to_str().map(|string| string.to_string())).unwrap_or(Some(file_name.clone())).unwrap_or(file_name.clone());
                         file_path.push(&file_name_truncated);
