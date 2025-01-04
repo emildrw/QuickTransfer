@@ -1,3 +1,5 @@
+use aes::cipher::ArrayLength;
+use aes_gcm::TagSize;
 use byteorder::{WriteBytesExt, BE};
 use serde::Serialize;
 use std::{
@@ -5,20 +7,19 @@ use std::{
     io::{ErrorKind, Read},
     path::Path,
 };
-use tokio::io::AsyncWriteExt;
 
 use crate::common::{
     directory_description,
     messages::{
         MAX_FILE_FRAGMENT_SIZE, MESSAGE_CD, MESSAGE_DIR, MESSAGE_DISCONNECT, MESSAGE_DOWNLOAD,
-        MESSAGE_DOWNLOAD_SUCCESS, MESSAGE_INIT, MESSAGE_LS, MESSAGE_MKDIR, MESSAGE_UPLOAD,
+        MESSAGE_DOWNLOAD_SUCCESS, MESSAGE_LS, MESSAGE_MKDIR, MESSAGE_UPLOAD,
     },
     CommunicationAgent, QuickTransferError,
 };
 
 use super::messages::{MessageDirectoryContents, MESSAGE_REMOVE, MESSAGE_RENAME};
 
-impl CommunicationAgent<'_> {
+impl<NonceSize: ArrayLength<u8>, TS: TagSize> CommunicationAgent<'_, NonceSize, TS> {
     /// Send bytes from message over TCP.
     async fn send_tcp(&mut self, message: &[u8], flush: bool) -> Result<(), QuickTransferError> {
         self.stream.write_all(message).await.map_err(|err| {
@@ -35,13 +36,6 @@ impl CommunicationAgent<'_> {
                 .await
                 .map_err(|_| QuickTransferError::ErrorWhileSendingMessage(self.role))?;
         }
-
-        Ok(())
-    }
-
-    /// Sends an init message (header).
-    pub async fn send_init_message(&mut self) -> Result<(), QuickTransferError> {
-        self.send_tcp(MESSAGE_INIT.as_bytes(), true).await?;
 
         Ok(())
     }

@@ -1,30 +1,23 @@
+use aes::cipher::ArrayLength;
+use aes_gcm::{aead::KeyInit, Aes256Gcm, Key, TagSize};
 use colored::*;
 use rustyline_async::{Readline, ReadlineEvent, SharedWriter};
 use std::{
-    fs::{self, File},
-    io::{ErrorKind, Write},
-    ops::Deref,
-    path::{Path, PathBuf},
-    sync::{
+    fs::{self, File}, io::{ErrorKind, Write}, net::SocketAddr, ops::Deref, path::{Path, PathBuf}, sync::{
         atomic::{AtomicUsize, Ordering},
         Arc,
-    },
+    }
 };
 use tokio::{
-    net::{TcpListener, TcpStream},
-    sync::broadcast::{self, Receiver, Sender},
+    net::TcpListener, sync::broadcast::{self, Receiver, Sender}
 };
 
 use crate::common::{
     directory_description,
     messages::{
-        CdAnswer, FileFail, MkdirAnswer, RemoveAnswer, RenameAnswer, UploadResult, MESSAGE_CD,
-        MESSAGE_CDANSWER, MESSAGE_DISCONNECT, MESSAGE_DOWNLOAD, MESSAGE_DOWNLOAD_FAIL,
-        MESSAGE_INIT, MESSAGE_LS, MESSAGE_MKDIR, MESSAGE_MKDIRANS, MESSAGE_REMOVE,
-        MESSAGE_REMOVE_ANSWER, MESSAGE_RENAME, MESSAGE_RENAME_ANSWER, MESSAGE_UPLOAD,
-        MESSAGE_UPLOAD_RESULT,
+        CdAnswer, FileFail, MkdirAnswer, RemoveAnswer, RenameAnswer, UploadResult, MESSAGE_CD, MESSAGE_CDANSWER, MESSAGE_DISCONNECT, MESSAGE_DOWNLOAD, MESSAGE_DOWNLOAD_FAIL, MESSAGE_INIT, MESSAGE_INIT_ENC, MESSAGE_LS, MESSAGE_MKDIR, MESSAGE_MKDIRANS, MESSAGE_NOT_ENC, MESSAGE_OK, MESSAGE_REMOVE, MESSAGE_REMOVE_ANSWER, MESSAGE_RENAME, MESSAGE_RENAME_ANSWER, MESSAGE_UPLOAD, MESSAGE_UPLOAD_RESULT
     },
-    CommunicationAgent, ProgramOptions, ProgramRole, QuickTransferError,
+    CommunicationAgent, ProgramOptions, ProgramRole, QuickTransferError, QuickTransferStream,
 };
 
 /// This functions server program run in server mode.
@@ -35,6 +28,12 @@ pub async fn handle_server(program_options: ProgramOptions) -> Result<(), QuickT
     );
 
     let listener = create_a_listener(&program_options).await?;
+
+    let encryption_enabled = program_options.aes_key.is_some();
+    let key = &program_options.aes_key.unwrap_or([0; 32]);
+    let key: &Key<Aes256Gcm> = key.into();
+    let cipher = Aes256Gcm::new(&key);
+
     let program_options_arc = Arc::new(program_options);
 
     // .0 -> true iff stop thread listening for next clients, .1 -> true iff server was closed from server
@@ -135,7 +134,7 @@ pub async fn handle_server(program_options: ProgramOptions) -> Result<(), QuickT
                 }
             }
             stream = listener.accept() => {
-                let stream = stream.map_err(|_| QuickTransferError::ConnectionCreation)?.0;
+                let (stream, client_address) = stream.map_err(|_| QuickTransferError::ConnectionCreation)?;
                 connected_clients2.fetch_add(1, Ordering::Relaxed);
 
                 let program_options_arc = Arc::clone(&program_options_arc);
@@ -143,8 +142,10 @@ pub async fn handle_server(program_options: ProgramOptions) -> Result<(), QuickT
                 let tx_disconnected = tx_disconnected.clone();
                 let mut writer = writer2.clone();
 
+                let stream = QuickTransferStream::new_unencrypted(stream, cipher.clone(), ProgramRole::Server);
+
                 tokio::spawn(async move {
-                    let result = handle_client_as_a_server(stream, program_options_arc.deref(), tx_disconnected.clone(), rx_stop, &mut writer).await;
+                    let result = handle_client_as_a_server(stream, client_address, program_options_arc.deref(), encryption_enabled, tx_disconnected.clone(), rx_stop, &mut writer).await;
                     if let Err(error) = result {
                         tx_disconnected.send(true).unwrap();
                         eprintln!("{}", error);
@@ -192,31 +193,58 @@ async fn create_a_listener(
 }
 
 /// Handles the client once it is connected on some TCP stream.
-async fn handle_client_as_a_server(
-    mut stream: TcpStream,
+async fn handle_client_as_a_server<NonceSize: ArrayLength<u8>, TS: TagSize>(
+    mut stream: QuickTransferStream<NonceSize, TS>,
+    client_address: SocketAddr,
     program_options: &ProgramOptions,
+    encryption_enabled: bool,
     tx_disconnected: Sender<bool>,
     mut rx_stop: Receiver<(bool, bool)>,
     writer: &mut SharedWriter,
 ) -> Result<(), QuickTransferError> {
     // The documentation doesn't say, when this functions returns an error, so let's assume that never:
-    let client_address = stream.peer_addr().unwrap();
     let mut agent =
         CommunicationAgent::new(&mut stream, ProgramRole::Server, program_options.timeout);
 
-    agent.receive_message_header_check(MESSAGE_INIT).await?;
+    let mut is_connection_encrypted = false;
+
+    match agent.receive_message_header_bare().await?.as_str() {
+        MESSAGE_INIT => {
+            
+        }
+        MESSAGE_INIT_ENC => {
+            if encryption_enabled {
+                agent.change_to_encrypted();
+                is_connection_encrypted = true;
+            } else {
+                agent.send_message_bare(MESSAGE_NOT_ENC).await?;
+                return Err(QuickTransferError::Fatal); // TODO
+            }
+        }
+        _ => {
+            return Err(QuickTransferError::SentInvalidData(program_options.program_role));
+        }
+    }
 
     let client_name = client_address.ip().to_canonical().to_string();
     let client_port = client_address.port();
 
+    agent.send_message_bare(MESSAGE_OK).await?;
+
     writeln!(
         writer,
-        "{}{}{}",
+        "{}{}{}{}{}",
         "A new client (".green().bold(),
-        format!("[{}]:{}", client_name, client_port,)
+        format!("[{}]:{}", client_name, client_port)
             .on_green()
             .white(),
-        ") has connected!".green().bold(),
+        ") has connected! (connection ".green().bold(),
+        if is_connection_encrypted {
+            "encrypted"
+        } else {
+            "not encrypted"
+        }.green().bold(),
+        ")".green().bold(),
     )
     .map_err(|_| QuickTransferError::Stdout)?;
 

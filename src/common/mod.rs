@@ -1,11 +1,15 @@
 use core::fmt;
-use messages::{DirectoryContents, DirectoryPosition, MessageDirectoryContents};
+use aes::{cipher::ArrayLength, Aes256};
+use aes_gcm::{aead::{AeadMut, OsRng}, Nonce};
+use aes_gcm::{AesGcm, TagSize};
+use byteorder::{ReadBytesExt, WriteBytesExt, BE};
+use messages::{DirectoryContents, DirectoryPosition, MessageDirectoryContents, HEADER_NAME_LENGTH};
 use std::{
-    fs::{self, DirEntry},
-    path::Path,
+    collections::VecDeque, fs::{self, DirEntry}, io::{self, Cursor, ErrorKind, Write}, path::Path, str
 };
 use thiserror::Error;
-use tokio::net::TcpStream;
+use tokio::{io::{AsyncReadExt, AsyncWriteExt}, net::TcpStream};
+use rand::RngCore;
 
 pub mod messages;
 mod receive_utils;
@@ -42,22 +46,157 @@ pub struct ProgramOptions {
     pub port: u16,
     pub root_directory: String,
     pub timeout: u16,
+    pub aes_key: Option<[u8; 32]>,
 }
 
 /// A helper providing an abstraction for sending and receiving messages.
-pub struct CommunicationAgent<'a> {
-    stream: &'a mut TcpStream,
+pub struct CommunicationAgent<'a, NonceSize: ArrayLength<u8>, TS: TagSize> {
+    stream: &'a mut QuickTransferStream<NonceSize, TS>,
     role: ProgramRole,
     timeout: u16,
 }
 
-impl CommunicationAgent<'_> {
-    pub fn new(stream: &mut TcpStream, role: ProgramRole, timeout: u16) -> CommunicationAgent {
+impl<NonceSize: ArrayLength<u8>, TS: TagSize> CommunicationAgent<'_, NonceSize, TS> {
+    pub fn new(stream: &mut QuickTransferStream<NonceSize, TS>, role: ProgramRole, timeout: u16) -> CommunicationAgent<NonceSize, TS> {
         CommunicationAgent {
             stream,
             role,
             timeout,
         }
+    }
+}
+
+enum QuickTransferStreamOption {
+    Unencrypted,
+    Encrypted {
+        buffer: VecDeque<u8>,
+    },
+}
+
+pub struct QuickTransferStream<NonceSize: ArrayLength<u8>, TS: TagSize> {
+    option: QuickTransferStreamOption,
+    stream: TcpStream,
+    cipher: AesGcm<Aes256, NonceSize, TS>,
+    role: ProgramRole,
+}
+
+impl<NonceSize: ArrayLength<u8>, TS: TagSize> QuickTransferStream<NonceSize, TS> {
+    pub fn new_unencrypted(stream: TcpStream, cipher: AesGcm<Aes256, NonceSize, TS>, role: ProgramRole) -> QuickTransferStream<NonceSize, TS> {
+        QuickTransferStream {
+            option: QuickTransferStreamOption::Unencrypted,
+            stream,
+            cipher,
+            role
+        }
+    }
+    pub fn new_encrypted(stream: TcpStream, cipher: AesGcm<Aes256, NonceSize, TS>, role: ProgramRole) -> QuickTransferStream<NonceSize, TS> {
+        QuickTransferStream {
+            option: QuickTransferStreamOption::Encrypted{
+                buffer: VecDeque::new(),
+            },
+            cipher,
+            stream,
+            role: role,
+        }
+    }
+    pub fn change_to_encrypted(&mut self) {
+        self.option = QuickTransferStreamOption::Encrypted {
+            buffer: VecDeque::new(),
+        };
+    }
+    async fn write_all(&mut self, buf: &[u8]) -> io::Result<()> {
+        match &mut self.option {
+            QuickTransferStreamOption::Unencrypted => self.stream.write_all(buf).await,
+            QuickTransferStreamOption::Encrypted{..} => {
+                let mut nonce = vec![0u8; 12];
+                OsRng.fill_bytes(&mut nonce);
+                let nonce_array = Nonce::from_slice(&nonce);
+                let cipher_text = self.cipher.encrypt(nonce_array, buf).map_err(|_| io::Error::new(ErrorKind::InvalidData, ""))?;
+
+                let mut to_send: Vec<u8> = vec![];
+                let message = bincode::serialize(
+                    &(nonce, cipher_text)
+                ).map_err(|_| io::Error::new(ErrorKind::InvalidData, ""))?;
+
+                // We assume that usize <= u64:
+                WriteBytesExt::write_u64::<BE>(&mut to_send, message.len().try_into().unwrap()).map_err(|_| io::Error::new(ErrorKind::InvalidData, ""))?;
+                to_send.extend(message);
+
+                self.stream.write_all(&to_send).await
+            }
+        }
+    }
+    async fn flush(&mut self) -> io::Result<()> {
+        self.stream.flush().await
+    }
+    async fn read_exact(&mut self, mut buf: &mut [u8]) -> io::Result<usize> {
+        match &mut self.option {
+            QuickTransferStreamOption::Unencrypted => self.stream.read_exact(buf).await,
+            QuickTransferStreamOption::Encrypted{buffer} => {
+                while buffer.len() < buf.len() {
+                    let mut buffer_msg = [0_u8; 8];
+                    self.stream.read_exact(&mut buffer_msg).await?;
+                    let to_receive = ReadBytesExt::read_u64::<BE>(&mut Cursor::new(buffer_msg.to_vec()))?;
+    
+                    let mut received_data: Vec<u8> = vec![0_u8; to_receive.try_into().unwrap()];
+                    self.stream.read_exact(&mut received_data).await?;
+                    let deserialized_message: (Vec<u8>, Vec<u8>) = bincode::deserialize(&received_data).map_err(|_| io::Error::new(ErrorKind::InvalidData, ""))?;
+                    let nonce_array = Nonce::from_slice(&deserialized_message.0);
+    
+                    let plain_text = self.cipher.decrypt(nonce_array, deserialized_message.1.as_ref()).map_err(|_| io::Error::new(ErrorKind::InvalidData, ""))?;
+
+                    buffer.extend(plain_text);
+                }
+
+                let message: Vec<u8> = buffer.drain(0..buf.len()).collect();
+                buf.write_all(&message)?;
+
+                Ok(buf.len())
+            }
+        }
+    }
+    pub async fn send_message_bare(&mut self, message: &str) -> Result<(), QuickTransferError> {
+        let message = message.as_bytes();
+        self.stream.write_all(message).await.map_err(|err| {
+            if let ErrorKind::UnexpectedEof = err.kind() {
+                QuickTransferError::RemoteClosedConnection(self.role)
+            } else {
+                QuickTransferError::ErrorWhileSendingMessage(self.role)
+            }
+        })?;
+
+        self.stream.flush().await.map_err(|_: io::Error| {
+            QuickTransferError::ErrorWhileSendingMessage(self.role)
+        })?;
+
+        Ok(())
+    }
+    pub async fn receive_message_header_bare(&mut self) -> Result<String, QuickTransferError> {
+        let mut message_buffer: [u8; 8] = [0_u8; HEADER_NAME_LENGTH];
+        self.stream.read_exact(&mut message_buffer).await.map_err(|err| {
+            if let ErrorKind::UnexpectedEof = err.kind() {
+                return QuickTransferError::RemoteClosedConnection(self.role);
+            }
+
+            QuickTransferError::MessageReceive(self.role)
+        })?;
+
+        let header_received =
+            str::from_utf8(&message_buffer).map_err(|_| QuickTransferError::SentInvalidData(self.role))?;
+
+        Ok(String::from(header_received))
+    }
+}
+
+impl<NonceSize: ArrayLength<u8>, TS: TagSize> CommunicationAgent<'_, NonceSize, TS> {
+    pub async fn send_message_bare(&mut self, message: &str) -> Result<(), QuickTransferError> {
+        self.stream.send_message_bare(message).await
+    }
+    pub async fn receive_message_header_bare(&mut self) -> Result<String, QuickTransferError> {
+        self.stream.receive_message_header_bare().await
+    }
+    pub fn change_to_encrypted(&mut self) {
+        self.stream.change_to_encrypted();
     }
 }
 
@@ -190,6 +329,9 @@ pub enum QuickTransferError {
 
     #[error("A problem with writing file `{file_path}` has occurred.")]
     WritingFile { file_path: String },
+
+    #[error("Server doesn't support encryption.")]
+    ServerDoesNotSupportEncryption,
 
     #[error("")]
     Other,

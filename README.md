@@ -41,7 +41,7 @@ QuickTransfer provides an intuitive input/output system for operating with files
 ## Program protocol
 `QuickTransfer` works on **TCP**.
 
-All messages' exchanged within client and server have headers: they are a sequence of 8 bytes -- an id of the message type.
+All messages exchanged within client and server have headers: they are a sequence of 8 bytes -- an id of the message type.
 
 ### Messages sent between client and server
 #### Messages structures

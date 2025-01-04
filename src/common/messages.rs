@@ -2,6 +2,9 @@ use serde::{Deserialize, Serialize};
 
 // Messages headers:
 pub const MESSAGE_INIT: &str = "INIT____";
+pub const MESSAGE_INIT_ENC: &str = "INIT_ENC"; // TODO
+pub const MESSAGE_NOT_ENC: &str = "NOT__ENC"; // TODO
+pub const MESSAGE_OK: &str = "OK______"; // TODO
 pub const MESSAGE_DIR: &str = "DIR_____";
 pub const MESSAGE_CD: &str = "CD______";
 pub const MESSAGE_CDANSWER: &str = "CDANSWER";

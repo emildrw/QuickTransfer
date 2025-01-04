@@ -1,6 +1,6 @@
 use argparse::{ArgumentParser, Store, StoreTrue};
 use colored::*;
-use std::path::Path;
+use std::{fs::File, io::Read, path::Path};
 
 mod client;
 mod common;
@@ -15,6 +15,7 @@ fn parse_arguments() -> Option<ProgramOptions> {
     let mut port: u16 = DEFAULT_PORT;
     let mut root_directory = String::new();
     let mut timeout: u16 = DEFAULT_TIMEOUT;
+    let mut aes_key_file = String::new();
 
     let parsing_result: Result<(), i32>;
 
@@ -37,6 +38,7 @@ fn parse_arguments() -> Option<ProgramOptions> {
             Store,
             "Specify timeout (in seconds) for waiting for the whole message. Default: `5`",
         );
+        argument_parser.refer(&mut aes_key_file).add_option(&["-k", "--key"], Store, "Path to 32-byte file holding an AES key (pure bytes). If not specified, the connection won't be encrypted.");
 
         parsing_result = argument_parser.parse_args();
     }
@@ -59,6 +61,20 @@ fn parse_arguments() -> Option<ProgramOptions> {
         server_ip_address = String::from("::");
     }
 
+    let mut aes_key: Option<[u8; 32]> = None;
+
+    if !aes_key_file.is_empty() {
+        let Ok(mut opened_file) = File::open(aes_key_file.clone()) else {
+            eprintln!("The path `{}` to AES key does not exist.", aes_key_file);
+            return None;
+        };
+        aes_key = Some([0; 32]);
+        if opened_file.read_exact(&mut aes_key.unwrap()).is_err() {
+            eprintln!("File {} is shorter than 32 bytes!", aes_key_file);
+            return None;
+        }
+    }
+
     if parsing_result.is_ok() {
         Some(ProgramOptions {
             program_role: if role_server {
@@ -70,6 +86,7 @@ fn parse_arguments() -> Option<ProgramOptions> {
             port,
             root_directory,
             timeout,
+            aes_key,
         })
     } else {
         None
@@ -101,6 +118,6 @@ async fn main() {
     }
 
     if !cfg!(windows) {
-        println!("");
+        println!();
     }
 }

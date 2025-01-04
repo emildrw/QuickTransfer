@@ -1,3 +1,5 @@
+use aes::cipher::ArrayLength;
+use aes_gcm::{aead::KeyInit, Aes256Gcm, Key, TagSize};
 use colored::*;
 use rustyline_async::{Readline, ReadlineEvent, SharedWriter};
 use std::{
@@ -9,12 +11,9 @@ use tokio::net::TcpStream;
 
 use crate::common::{
     messages::{
-        CdAnswer, DirectoryContents, FileFail, MessageDirectoryContents, MkdirAnswer, RemoveAnswer,
-        RenameAnswer, UploadResult, MESSAGE_CDANSWER, MESSAGE_DIR, MESSAGE_DISCONNECT,
-        MESSAGE_DOWNLOAD_FAIL, MESSAGE_DOWNLOAD_SUCCESS, MESSAGE_MKDIRANS, MESSAGE_REMOVE_ANSWER,
-        MESSAGE_RENAME_ANSWER, MESSAGE_UPLOAD_RESULT,
+        CdAnswer, DirectoryContents, FileFail, MessageDirectoryContents, MkdirAnswer, RemoveAnswer, RenameAnswer, UploadResult, MESSAGE_CDANSWER, MESSAGE_DIR, MESSAGE_DISCONNECT, MESSAGE_DOWNLOAD_FAIL, MESSAGE_DOWNLOAD_SUCCESS, MESSAGE_INIT, MESSAGE_INIT_ENC, MESSAGE_MKDIRANS, MESSAGE_NOT_ENC, MESSAGE_OK, MESSAGE_REMOVE_ANSWER, MESSAGE_RENAME_ANSWER, MESSAGE_UPLOAD_RESULT
     },
-    CommunicationAgent, ProgramOptions, ProgramRole, QuickTransferError,
+    CommunicationAgent, ProgramOptions, ProgramRole, QuickTransferError, QuickTransferStream,
 };
 
 // This function is a wrapper to catch errors and (try to) gracefully end a connection in all cases.
@@ -24,7 +23,19 @@ pub async fn handle_client(program_options: &ProgramOptions) -> Result<(), Quick
         program_options.server_ip_address, program_options.port
     );
 
-    let mut stream = connect_to_server(program_options).await?;
+    let connection_encrypted = program_options.aes_key.is_some();
+    let key = &program_options.aes_key.unwrap_or([0; 32]);
+    let key: &Key<Aes256Gcm> = key.into();
+    let cipher = Aes256Gcm::new(&key);
+
+    let stream = connect_to_server(program_options).await?;
+
+    let mut stream = if connection_encrypted {
+        QuickTransferStream::new_encrypted(stream, cipher, ProgramRole::Client)
+    } else {
+        QuickTransferStream::new_unencrypted(stream, cipher, ProgramRole::Client)
+    };
+    
     let mut agent =
         CommunicationAgent::new(&mut stream, ProgramRole::Client, program_options.timeout);
     let result = serve_client(program_options, &mut agent).await;
@@ -38,18 +49,43 @@ pub async fn handle_client(program_options: &ProgramOptions) -> Result<(), Quick
 }
 
 /// This functions server program run in client mode. Returns whether the client has disconnected.
-async fn serve_client(
+async fn serve_client<NonceSize: ArrayLength<u8>, TS: TagSize>(
     program_options: &ProgramOptions,
-    agent: &mut CommunicationAgent<'_>,
+    agent: &mut CommunicationAgent<'_, NonceSize, TS>,
 ) -> Result<bool, QuickTransferError> {
-    agent.send_init_message().await?;
+    agent.send_message_bare(if program_options.aes_key.is_some() {
+        MESSAGE_INIT_ENC
+    } else {
+        MESSAGE_INIT
+    }).await?;
+
+    match agent.receive_message_header_bare().await?.as_str() {
+        MESSAGE_NOT_ENC => {
+            return Err(QuickTransferError::ServerDoesNotSupportEncryption);
+        }
+        MESSAGE_OK => {
+
+        }
+        _ => {
+            return Err(QuickTransferError::SentInvalidData(ProgramRole::Client));
+        }
+    }
+
     agent.receive_message_header_check(MESSAGE_DIR).await?;
 
     println!(
-        "{}{}{}",
-        "Successfully connected to ".green().bold(),
-        program_options.server_ip_address.on_green().white(),
-        "!".green().bold(),
+        "{}{}{}{}{}",
+        "Successfully connected to [".green().bold(),
+        format!("[{}]", program_options.server_ip_address)
+            .on_green()
+            .white(),
+        "]! (connection ".green().bold(),
+        if program_options.aes_key.is_some() {
+            "encrypted"
+        } else {
+            "not encrypted"
+        }.green().bold(),
+        ")".green().bold(),
     );
 
     let rl = Readline::new(String::from("QuickTransfer> ")).unwrap();
