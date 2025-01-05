@@ -2,9 +2,9 @@ use serde::{Deserialize, Serialize};
 
 // Messages headers:
 pub const MESSAGE_INIT: &str = "INIT____";
-pub const MESSAGE_INIT_ENC: &str = "INIT_ENC"; // TODO
-pub const MESSAGE_NOT_ENC: &str = "NOT__ENC"; // TODO
-pub const MESSAGE_OK: &str = "OK______"; // TODO
+pub const MESSAGE_INIT_ENC: &str = "INIT_ENC";
+pub const MESSAGE_NOT_ENC: &str = "NOT__ENC";
+pub const MESSAGE_OK: &str = "OK______";
 pub const MESSAGE_DIR: &str = "DIR_____";
 pub const MESSAGE_CD: &str = "CD______";
 pub const MESSAGE_CDANSWER: &str = "CDANSWER";
@@ -28,6 +28,17 @@ pub const MESSAGE_LENGTH_LENGTH: usize = 8;
 pub const MAX_FILE_FRAGMENT_SIZE: usize = 1024;
 
 // Messages bodies:
+#[derive(Serialize, Deserialize, PartialEq, Debug)]
+pub struct UnencryptedMessage {
+    pub content: Vec<u8>,
+}
+
+#[derive(Serialize, Deserialize, PartialEq, Debug)]
+pub struct EncryptedMessage {
+    pub nonce: Vec<u8>,
+    pub content: Vec<u8>,
+}
+
 #[derive(Serialize, Deserialize, PartialEq, Debug)]
 pub struct DirectoryPosition {
     pub name: String,

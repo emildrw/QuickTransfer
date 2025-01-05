@@ -1,5 +1,4 @@
-use aes::cipher::ArrayLength;
-use aes_gcm::{aead::KeyInit, Aes256Gcm, Key, TagSize};
+use aes_gcm::{aead::KeyInit, Aes256Gcm, Key};
 use colored::*;
 use rustyline_async::{Readline, ReadlineEvent, SharedWriter};
 use std::{
@@ -29,11 +28,7 @@ pub async fn handle_server(program_options: ProgramOptions) -> Result<(), QuickT
 
     let listener = create_a_listener(&program_options).await?;
 
-    let encryption_enabled = program_options.aes_key.is_some();
-    let key = &program_options.aes_key.unwrap_or([0; 32]);
-    let key: &Key<Aes256Gcm> = key.into();
-    let cipher = Aes256Gcm::new(&key);
-
+    let timeout = program_options.timeout;
     let program_options_arc = Arc::new(program_options);
 
     // .0 -> true iff stop thread listening for next clients, .1 -> true iff server was closed from server
@@ -142,10 +137,10 @@ pub async fn handle_server(program_options: ProgramOptions) -> Result<(), QuickT
                 let tx_disconnected = tx_disconnected.clone();
                 let mut writer = writer2.clone();
 
-                let stream = QuickTransferStream::new_unencrypted(stream, cipher.clone(), ProgramRole::Server);
+                let stream = QuickTransferStream::new_unencrypted(stream, ProgramRole::Server, timeout);
 
                 tokio::spawn(async move {
-                    let result = handle_client_as_a_server(stream, client_address, program_options_arc.deref(), encryption_enabled, tx_disconnected.clone(), rx_stop, &mut writer).await;
+                    let result = handle_client_as_a_server(stream, client_address, program_options_arc.deref(), tx_disconnected.clone(), rx_stop, &mut writer).await;
                     if let Err(error) = result {
                         tx_disconnected.send(true).unwrap();
                         eprintln!("{}", error);
@@ -193,11 +188,10 @@ async fn create_a_listener(
 }
 
 /// Handles the client once it is connected on some TCP stream.
-async fn handle_client_as_a_server<NonceSize: ArrayLength<u8>, TS: TagSize>(
-    mut stream: QuickTransferStream<NonceSize, TS>,
+async fn handle_client_as_a_server (
+    mut stream: QuickTransferStream,
     client_address: SocketAddr,
     program_options: &ProgramOptions,
-    encryption_enabled: bool,
     tx_disconnected: Sender<bool>,
     mut rx_stop: Receiver<(bool, bool)>,
     writer: &mut SharedWriter,
@@ -208,16 +202,18 @@ async fn handle_client_as_a_server<NonceSize: ArrayLength<u8>, TS: TagSize>(
 
     let mut is_connection_encrypted = false;
 
-    match agent.receive_message_header_bare().await?.as_str() {
+    match agent.receive_bare_message_header().await?.as_str() {
         MESSAGE_INIT => {
             
         }
         MESSAGE_INIT_ENC => {
-            if encryption_enabled {
-                agent.change_to_encrypted();
+            if let Some(key) = &program_options.aes_key {
+                let key: &Key<Aes256Gcm> = key.into();
+                let cipher = Aes256Gcm::new(&key);
+                agent.change_to_encrypted(cipher);
                 is_connection_encrypted = true;
             } else {
-                agent.send_message_bare(MESSAGE_NOT_ENC).await?;
+                agent.send_bare_message(MESSAGE_NOT_ENC).await?;
                 return Err(QuickTransferError::Fatal); // TODO
             }
         }
@@ -229,7 +225,7 @@ async fn handle_client_as_a_server<NonceSize: ArrayLength<u8>, TS: TagSize>(
     let client_name = client_address.ip().to_canonical().to_string();
     let client_port = client_address.port();
 
-    agent.send_message_bare(MESSAGE_OK).await?;
+    agent.send_bare_message(MESSAGE_OK).await?;
 
     writeln!(
         writer,
@@ -269,11 +265,13 @@ async fn handle_client_as_a_server<NonceSize: ArrayLength<u8>, TS: TagSize>(
                     return Ok(());
                 }
             }
-            header_received = agent.receive_message_header(true) => {
-                let header_received = header_received?;
+            message_received = agent.receive_tcp(true) => {
+                let message_received = message_received?;
+                let (header_received, message_received) = agent.read_message_header(&message_received)?;
+
                 match header_received.as_str() {
                     MESSAGE_CD => {
-                        let dir_name = agent.receive_cd_message().await?;
+                        let (dir_name, _) = agent.read_length_with_string(message_received)?;
                         let mut next_path = current_path.to_path_buf();
                         next_path.push(dir_name);
 
@@ -300,18 +298,17 @@ async fn handle_client_as_a_server<NonceSize: ArrayLength<u8>, TS: TagSize>(
                         agent.send_directory_description(&current_path, &root_directory).await?;
                     }
                     MESSAGE_DOWNLOAD => {
-                        let file_name = agent.receive_length_with_string().await?;
+                        let (file_name, _) = agent.read_length_with_string(message_received)?;
                         let mut file_path = current_path.to_path_buf();
                         file_path.push(file_name);
 
-                        if !fs::exists(file_path.as_path()).unwrap() || !file_path.as_path().is_file() {
-                            agent.send_answer(MESSAGE_DOWNLOAD_FAIL, &FileFail::FileDoesNotExist).await?;
+                        if !file_path.starts_with(root_directory.clone()) {
+                            agent.send_answer(MESSAGE_DOWNLOAD_FAIL, &FileFail::IllegalFile).await?;
                             continue;
                         }
 
-                        let current = file_path.canonicalize().unwrap();
-                        if !current.starts_with(root_directory.clone()) {
-                            agent.send_answer(MESSAGE_DOWNLOAD_FAIL, &FileFail::IllegalFile).await?;
+                        if !fs::exists(file_path.as_path()).unwrap() || !file_path.as_path().is_file() {
+                            agent.send_answer(MESSAGE_DOWNLOAD_FAIL, &FileFail::FileDoesNotExist).await?;
                             continue;
                         }
 
@@ -321,13 +318,13 @@ async fn handle_client_as_a_server<NonceSize: ArrayLength<u8>, TS: TagSize>(
                         };
 
                         let file_size = opened_file.metadata().unwrap().len();
-                        agent.send_download_success(file_size).await?;
 
+                        agent.send_download_success(file_size).await?;
                         agent.send_file(opened_file, file_size, &file_path).await?;
                     }
                     MESSAGE_UPLOAD => {
-                        let file_name = agent.receive_length_with_string().await?;
-                        let file_size = agent.receive_u64().await?;
+                        let (file_name, message_received) = agent.read_length_with_string(message_received)?;
+                        let (file_size, _) = agent.read_u64(message_received)?;
                         let mut file_path = current_path.to_path_buf();
                         let file_name_truncated = Path::new(&file_name).file_name().map(|string| string.to_str().map(|string| string.to_string())).unwrap_or(Some(file_name.clone())).unwrap_or(file_name.clone());
                         file_path.push(&file_name_truncated);
@@ -347,7 +344,7 @@ async fn handle_client_as_a_server<NonceSize: ArrayLength<u8>, TS: TagSize>(
                         }
                     }
                     MESSAGE_MKDIR => {
-                        let directory_name = agent.receive_length_with_string().await?;
+                        let (directory_name, _) = agent.read_length_with_string(message_received)?;
                         let mut next_path = current_path.to_path_buf();
                         next_path.push(&directory_name);
 
@@ -370,8 +367,8 @@ async fn handle_client_as_a_server<NonceSize: ArrayLength<u8>, TS: TagSize>(
                         agent.send_answer(MESSAGE_MKDIRANS, &MkdirAnswer::Success).await?;
                     }
                     MESSAGE_RENAME => {
-                        let file_dir_name = agent.receive_length_with_string().await?;
-                        let new_name = agent.receive_length_with_string().await?;
+                        let (file_dir_name, message_received) = agent.read_length_with_string(message_received)?;
+                        let (new_name, _) = agent.read_length_with_string(message_received)?;
 
                         let mut file_path = current_path.to_path_buf();
                         file_path.push(&file_dir_name);
@@ -395,7 +392,7 @@ async fn handle_client_as_a_server<NonceSize: ArrayLength<u8>, TS: TagSize>(
                         agent.send_answer(MESSAGE_RENAME_ANSWER, &RenameAnswer::Success).await?;
                     }
                     MESSAGE_REMOVE => {
-                        let file_dir_name = agent.receive_length_with_string().await?;
+                        let (file_dir_name, _) = agent.read_length_with_string(message_received)?;
 
                         let mut file_path = current_path.to_path_buf();
                         file_path.push(&file_dir_name);

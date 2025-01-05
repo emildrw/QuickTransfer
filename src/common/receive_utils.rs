@@ -1,48 +1,41 @@
-use aes::cipher::ArrayLength;
-use aes_gcm::TagSize;
+use aes_gcm::{aead::Aead, Nonce};
 use byteorder::{ReadBytesExt, BE};
 use core::str;
 use serde::de::DeserializeOwned;
 use std::{
-    cmp::min,
     fs::File,
-    io::{Cursor, ErrorKind, Write},
+    io::{Cursor, Write},
     path::Path,
     time::Duration,
 };
-use tokio::time::timeout;
+use tokio::{io::AsyncReadExt, time::timeout};
 
 use crate::common::{
-    messages::{HEADER_NAME_LENGTH, MAX_FILE_FRAGMENT_SIZE, MESSAGE_LENGTH_LENGTH},
+    messages::{EncryptedMessage, HEADER_NAME_LENGTH, MESSAGE_LENGTH_LENGTH},
     CommunicationAgent, QuickTransferError,
 };
 
-impl<NonceSize: ArrayLength<u8>, TS: TagSize> CommunicationAgent<'_, NonceSize, TS> {
-    /// Receives exactly this number of bytes to fill the buffer from TCP.
-    /// If wait == true, then timeout for the first byte is not set.
-    async fn receive_tcp(
-        &mut self,
-        message_buffer: &mut [u8],
-        wait: bool,
-    ) -> Result<(), QuickTransferError> {
+use crate::common::QuickTransferStream;
+use crate::common::QuickTransferStreamOption;
+
+use super::{map_tcp_error, messages::UnencryptedMessage};
+
+impl QuickTransferStream {
+    /// TODO
+    async fn receive_tcp(&mut self, wait: bool) -> Result<Vec<u8>, QuickTransferError> {
+        let mut message_length_buffer: [u8; 8] = [0_u8; MESSAGE_LENGTH_LENGTH];
         if wait {
             // Read first byte:
             self.stream
-                .read_exact(&mut message_buffer[0..1])
+                .read_exact(&mut message_length_buffer[0..1])
                 .await
-                .map_err(|err| {
-                    if let ErrorKind::UnexpectedEof = err.kind() {
-                        return QuickTransferError::RemoteClosedConnection(self.role);
-                    }
-
-                    QuickTransferError::MessageReceive(self.role)
-                })?;
+                .map_err(|error| map_tcp_error(error, self.role))?;
         }
 
         let status = if wait {
-            self.stream.read_exact(&mut message_buffer[1..])
+            self.stream.read_exact(&mut message_length_buffer[1..])
         } else {
-            self.stream.read_exact(message_buffer)
+            self.stream.read_exact(&mut message_length_buffer)
         };
 
         match timeout(Duration::from_secs(self.timeout.into()), status).await {
@@ -50,87 +43,120 @@ impl<NonceSize: ArrayLength<u8>, TS: TagSize> CommunicationAgent<'_, NonceSize, 
                 return Err(QuickTransferError::MessageReceiveTimeout(self.role));
             }
             Ok(result) => {
-                result.map_err(|err| {
-                    if let ErrorKind::UnexpectedEof = err.kind() {
-                        return QuickTransferError::RemoteClosedConnection(self.role);
-                    }
-
-                    QuickTransferError::MessageReceive(self.role)
-                })?;
+                result.map_err(|error| map_tcp_error(error, self.role))?;
             }
         }
 
-        Ok(())
+        let bytes_to_receive = ReadBytesExt::read_u64::<BE>(&mut Cursor::new(message_length_buffer.to_vec())).map_err(|_| QuickTransferError::SentInvalidData(self.role))?;
+        let mut received_data: Vec<u8> = vec![0_u8; bytes_to_receive.try_into().unwrap()];
+
+        let status = self.stream.read_exact(&mut received_data);
+        match timeout(Duration::from_secs(self.timeout.into()), status).await {
+            Err(_) => {
+                return Err(QuickTransferError::MessageReceiveTimeout(self.role));
+            }
+            Ok(result) => {
+                result.map_err(|error| map_tcp_error(error, self.role))?;
+            }
+        }
+    
+        match &mut self.option {
+            QuickTransferStreamOption::Unencrypted => {
+                let deserialized_message: UnencryptedMessage = bincode::deserialize(&received_data).map_err(|_| QuickTransferError::SentInvalidData(self.role))?;
+
+                Ok(deserialized_message.content)
+            }
+            QuickTransferStreamOption::Encrypted { cipher, .. } => {
+                let deserialized_message: EncryptedMessage = bincode::deserialize(&received_data).map_err(|_| QuickTransferError::SentInvalidData(self.role))?;
+                let nonce_array = Nonce::from_slice(&deserialized_message.nonce);
+
+                let plain_text = cipher.decrypt(nonce_array, deserialized_message.content.as_ref()).map_err(|_| QuickTransferError::Deciphering)?;
+
+                Ok(plain_text)
+            }
+        }
     }
+    /// TODO
+    pub async fn receive_bare_message_header(&mut self, timeout: u16) -> Result<String, QuickTransferError> {
+        let mut message_header_buffer: [u8; 8] = [0_u8; HEADER_NAME_LENGTH];
 
-    /// Receives the message header (takes 8 bytes).
-    pub async fn receive_message_header(
-        &mut self,
-        wait: bool,
-    ) -> Result<String, QuickTransferError> {
-        let mut buffer: [u8; 8] = [0_u8; HEADER_NAME_LENGTH];
+        let status = self.stream.read_exact(&mut message_header_buffer);
+        match tokio::time::timeout(Duration::from_secs(timeout.into()), status).await {
+            Err(_) => {
+                return Err(QuickTransferError::MessageReceiveTimeout(self.role));
+            }
+            Ok(result) => {
+                result.map_err(|error| map_tcp_error(error, self.role))?;
+            }
+        }
 
-        self.receive_tcp(&mut buffer, wait).await?;
         let header_received =
-            str::from_utf8(&buffer).map_err(|_| QuickTransferError::SentInvalidData(self.role))?;
+            str::from_utf8(&message_header_buffer).map_err(|_| QuickTransferError::SentInvalidData(self.role))?;
 
         Ok(String::from(header_received))
     }
+}
 
-    /// Receives a message header and automatically ensures it is equal to `message_header`.
-    pub async fn receive_message_header_check(
-        &mut self,
-        message_header: &str,
-    ) -> Result<(), QuickTransferError> {
-        let received = self.receive_message_header(false).await?;
+impl CommunicationAgent<'_> {
+    /// Receives one message package.
+    /// If wait == true, then timeout for the first byte is not set.
+    pub async fn receive_tcp(&mut self, wait: bool) -> Result<Vec<u8>, QuickTransferError> {
+        self.stream.receive_tcp(wait).await
+    }
 
-        if received != message_header {
+    /// Receives a string (reads exactly `string_length` bytes so as to receive it).
+    pub fn read_string<'a>(&mut self, message: &'a [u8], string_length: u64) -> Result<(String, &'a [u8]), QuickTransferError> {
+        let string_length: usize = string_length.try_into().unwrap();
+        let string = str::from_utf8(&message[..string_length])
+            .map_err(|_| QuickTransferError::SentInvalidData(self.role))?;
+
+        Ok((String::from(string), &message[string_length..]))
+    }
+
+    /// Reads a message header string (takes 8 bytes).
+    pub fn read_message_header<'a>(&mut self, message: &'a [u8]) -> Result<(String, &'a [u8]), QuickTransferError> {
+        self.read_string(message, HEADER_NAME_LENGTH.try_into().unwrap())
+    }
+    
+    /// Receives (waits) a message header string (takes 8 bytes).
+    pub async fn receive_message_header(&mut self) -> Result<String, QuickTransferError> {
+        let message = self.receive_tcp(true).await?;
+        let (header, _) = self.read_message_header(&message)?;
+
+        Ok(header)
+    }
+
+    /// Reads a message header and automatically ensures it is equal to `message_header`.
+    pub fn read_message_header_check<'a>(&mut self, message: &'a [u8], message_header: &str) -> Result<&'a [u8], QuickTransferError> {
+        let (received_header, message) = self.read_message_header(message)?;
+
+        if received_header != message_header {
             Err(QuickTransferError::SentInvalidData(self.role))
         } else {
-            Ok(())
+            Ok(message)
         }
     }
 
     /// Receives a big-endian representation of a number (message length/file size/string size etc.) (takes 8 bytes).
-    pub async fn receive_u64(&mut self) -> Result<u64, QuickTransferError> {
-        let mut buffer = [0_u8; MESSAGE_LENGTH_LENGTH];
-
-        self.receive_tcp(&mut buffer, false).await?;
-
-        let read_number = ReadBytesExt::read_u64::<BE>(&mut Cursor::new(buffer.to_vec()))
+    pub fn read_u64<'a>(&mut self, message: &'a [u8]) -> Result<(u64, &'a [u8]), QuickTransferError> {
+        let read_number = ReadBytesExt::read_u64::<BE>(&mut Cursor::new(message[..MESSAGE_LENGTH_LENGTH].to_vec()))
             .map_err(|_| QuickTransferError::SentInvalidData(self.role))?;
 
-        Ok(read_number)
+        Ok((read_number, &message[MESSAGE_LENGTH_LENGTH..]))
     }
 
-    /// Receives a string (reads exactly `string_length` bytes so as to receive it).
-    pub async fn receive_string(
-        &mut self,
-        string_length: u64,
-    ) -> Result<String, QuickTransferError> {
-        let string_length: usize = string_length.try_into().unwrap();
-        let mut buffer: Vec<u8> = vec![0_u8; string_length];
-        self.receive_tcp(buffer.as_mut_slice(), false).await?;
-        let string = String::from_utf8(buffer)
-            .map_err(|_| QuickTransferError::SentInvalidData(self.role))?;
-
-        Ok(string)
+    /// Reads a string (its length and itself).
+    pub fn read_length_with_string<'a>(&mut self, message: &'a [u8]) -> Result<(String, &'a [u8]), QuickTransferError> {
+        let (string_length, message) = self.read_u64(message)?;
+        self.read_string(message, string_length)
     }
 
-    /// Receives a CD message (only message length and message).
-    pub async fn receive_cd_message(&mut self) -> Result<String, QuickTransferError> {
-        let dir_name_length = self.receive_u64().await?;
-        let dir_name = self.receive_string(dir_name_length).await?;
+    /// Reads an answer.
+    pub fn read_answer<'a, T: DeserializeOwned>(&mut self, message: &'a [u8]) -> Result<T, QuickTransferError> {
+        let (_, message) = self.read_u64(message)?;
+        let deserialized_answer: T = bincode::deserialize(message).unwrap();
 
-        Ok(dir_name)
-    }
-
-    /// Receives a string (its length and itself).
-    pub async fn receive_length_with_string(&mut self) -> Result<String, QuickTransferError> {
-        let file_name_length = self.receive_u64().await?;
-        let file_name = self.receive_string(file_name_length).await?;
-
-        Ok(file_name)
+        Ok(deserialized_answer)
     }
 
     /// Receives a file and saves it in blocks (reads `file_size` bytes).
@@ -142,20 +168,14 @@ impl<NonceSize: ArrayLength<u8>, TS: TagSize> CommunicationAgent<'_, NonceSize, 
         try_all: bool,
     ) -> Result<(), QuickTransferError> {
         let mut bytes_to_receive_left = file_size;
-        let mut buffer = [0_u8; MAX_FILE_FRAGMENT_SIZE];
 
         let mut just_receive = false;
         while bytes_to_receive_left > 0 {
-            let now_receive_bytes_u64: u64 = min(
-                MAX_FILE_FRAGMENT_SIZE.try_into().unwrap(),
-                bytes_to_receive_left,
-            );
-            let now_receive_bytes: usize = now_receive_bytes_u64.try_into().unwrap();
+            let file_block = self.receive_tcp(false).await?;
+            let received_bytes = file_block.len();
 
-            self.receive_tcp(&mut buffer[..now_receive_bytes], false)
-                .await?;
             if !just_receive {
-                let file_write_result = file.write_all(&buffer[..now_receive_bytes]);
+                let file_write_result = file.write_all(&file_block);
                 if file_write_result.is_err() {
                     if try_all {
                         just_receive = true;
@@ -167,19 +187,10 @@ impl<NonceSize: ArrayLength<u8>, TS: TagSize> CommunicationAgent<'_, NonceSize, 
                 }
             }
 
-            bytes_to_receive_left -= now_receive_bytes_u64;
+            let received_bytes: u64 = received_bytes.try_into().unwrap();
+            bytes_to_receive_left -= received_bytes;
         }
 
         Ok(())
-    }
-
-    /// Receives an answer.
-    pub async fn receive_answer<T: DeserializeOwned>(&mut self) -> Result<T, QuickTransferError> {
-        let answer_length: usize = self.receive_u64().await?.try_into().unwrap();
-        let mut buffer: Vec<u8> = vec![0_u8; answer_length];
-        self.receive_tcp(buffer.as_mut_slice(), false).await?;
-        let deserialized_message: T = bincode::deserialize(&buffer[..]).unwrap();
-
-        Ok(deserialized_message)
     }
 }

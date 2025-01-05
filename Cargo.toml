@@ -1,6 +1,6 @@
 [package]
 name = "QuickTransfer"
-version = "0.1.0"
+version = "0.2.0"
 authors = ["Emil Drwięga <emildrw@outlook.com>"]
 description = "QuickTransfer allows you to quickly upload and download files from any computer."
 readme = "README.md"

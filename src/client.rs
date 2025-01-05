@@ -1,5 +1,4 @@
-use aes::cipher::ArrayLength;
-use aes_gcm::{aead::KeyInit, Aes256Gcm, Key, TagSize};
+use aes_gcm::{aead::KeyInit, Aes256Gcm, Key};
 use colored::*;
 use rustyline_async::{Readline, ReadlineEvent, SharedWriter};
 use std::{
@@ -23,17 +22,14 @@ pub async fn handle_client(program_options: &ProgramOptions) -> Result<(), Quick
         program_options.server_ip_address, program_options.port
     );
 
-    let connection_encrypted = program_options.aes_key.is_some();
-    let key = &program_options.aes_key.unwrap_or([0; 32]);
-    let key: &Key<Aes256Gcm> = key.into();
-    let cipher = Aes256Gcm::new(&key);
-
     let stream = connect_to_server(program_options).await?;
 
-    let mut stream = if connection_encrypted {
-        QuickTransferStream::new_encrypted(stream, cipher, ProgramRole::Client)
+    let mut stream = if let Some(key) = &program_options.aes_key {
+        let key: &Key<Aes256Gcm> = key.into();
+        let cipher = Aes256Gcm::new(&key);
+        QuickTransferStream::new_encrypted(stream, cipher, ProgramRole::Client, program_options.timeout)
     } else {
-        QuickTransferStream::new_unencrypted(stream, cipher, ProgramRole::Client)
+        QuickTransferStream::new_unencrypted(stream, ProgramRole::Client, program_options.timeout)
     };
     
     let mut agent =
@@ -49,17 +45,17 @@ pub async fn handle_client(program_options: &ProgramOptions) -> Result<(), Quick
 }
 
 /// This functions server program run in client mode. Returns whether the client has disconnected.
-async fn serve_client<NonceSize: ArrayLength<u8>, TS: TagSize>(
+async fn serve_client (
     program_options: &ProgramOptions,
-    agent: &mut CommunicationAgent<'_, NonceSize, TS>,
+    agent: &mut CommunicationAgent<'_>,
 ) -> Result<bool, QuickTransferError> {
-    agent.send_message_bare(if program_options.aes_key.is_some() {
+    agent.send_bare_message(if program_options.aes_key.is_some() {
         MESSAGE_INIT_ENC
     } else {
         MESSAGE_INIT
     }).await?;
 
-    match agent.receive_message_header_bare().await?.as_str() {
+    match agent.receive_bare_message_header().await?.as_str() {
         MESSAGE_NOT_ENC => {
             return Err(QuickTransferError::ServerDoesNotSupportEncryption);
         }
@@ -71,15 +67,13 @@ async fn serve_client<NonceSize: ArrayLength<u8>, TS: TagSize>(
         }
     }
 
-    agent.receive_message_header_check(MESSAGE_DIR).await?;
-
     println!(
         "{}{}{}{}{}",
-        "Successfully connected to [".green().bold(),
-        format!("[{}]", program_options.server_ip_address)
+        "Successfully connected to ".green().bold(),
+        format!("[{}]:{}", program_options.server_ip_address, program_options.port)
             .on_green()
             .white(),
-        "]! (connection ".green().bold(),
+        "! (connection ".green().bold(),
         if program_options.aes_key.is_some() {
             "encrypted"
         } else {
@@ -91,9 +85,23 @@ async fn serve_client<NonceSize: ArrayLength<u8>, TS: TagSize>(
     let rl = Readline::new(String::from("QuickTransfer> ")).unwrap();
     let mut writer = rl.1;
     let mut rl = rl.0;
-    if let Ok(dir_description) = agent.receive_answer().await {
+    let message_received = agent.receive_tcp(false).await?;
+    let message_received = agent.read_message_header_check(&message_received, MESSAGE_DIR)?;
+    if let Ok(dir_description) = agent.read_answer::<MessageDirectoryContents>(&message_received) {
         if let MessageDirectoryContents::Success(dir_description) = &dir_description {
             print_directory_contents(dir_description, &mut writer)?;
+        } else {
+            writeln!(
+                writer,
+                "{}{}{}",
+                "Error: An error in reading contents of `".red(),
+                program_options.root_directory.clone().red(),
+                "` occurred.".red(),
+            )
+            .map_err(|_| QuickTransferError::Stdout)?;
+            writer.flush().map_err(|_| QuickTransferError::Stdout)?;
+    
+            return Err(QuickTransferError::Other);
         }
     } else {
         writeln!(
@@ -104,6 +112,7 @@ async fn serve_client<NonceSize: ArrayLength<u8>, TS: TagSize>(
             "` occurred.".red(),
         )
         .map_err(|_| QuickTransferError::Stdout)?;
+        writer.flush().map_err(|_| QuickTransferError::Stdout)?;
 
         return Err(QuickTransferError::Other);
     }
@@ -114,7 +123,7 @@ async fn serve_client<NonceSize: ArrayLength<u8>, TS: TagSize>(
 
     loop {
         tokio::select! {
-            header_received = agent.receive_message_header(true) => {
+            header_received = agent.receive_message_header() => {
                 let header_received = header_received?;
                 if header_received.as_str() == MESSAGE_DISCONNECT {
                     println!(
@@ -176,9 +185,11 @@ async fn serve_client<NonceSize: ArrayLength<u8>, TS: TagSize>(
                                 }
 
                                 agent.send_change_directory(&directory_name).await?;
-                                agent.receive_message_header_check(MESSAGE_CDANSWER).await?;
 
-                                let cd_answer = agent.receive_answer().await?;
+                                let message = agent.receive_tcp(false).await?;
+                                let message = agent.read_message_header_check(&message, MESSAGE_CDANSWER)?;
+                                let cd_answer = agent.read_answer(message)?;
+
                                 match cd_answer {
                                     CdAnswer::DirectoryDoesNotExist => {
                                         writeln!(
@@ -221,8 +232,11 @@ async fn serve_client<NonceSize: ArrayLength<u8>, TS: TagSize>(
                                     continue;
                                 }
                                 agent.send_list_directory().await?;
-                                agent.receive_message_header_check(MESSAGE_DIR).await?;
-                                let dir_description = agent.receive_answer().await?;
+
+                                let message = agent.receive_tcp(false).await?;
+                                let message = agent.read_message_header_check(&message, MESSAGE_DIR)?;
+                                let dir_description = agent.read_answer(message)?;
+
                                 if let MessageDirectoryContents::Success(dir_description) = dir_description {
                                     print_directory_contents(&dir_description, &mut writer)?;
                                 } else {
@@ -240,11 +254,12 @@ async fn serve_client<NonceSize: ArrayLength<u8>, TS: TagSize>(
                                 };
 
                                 agent.send_download_request(&file_name).await?;
-                                let header_received = agent.receive_message_header(false).await?;
+                                let message = agent.receive_tcp(false).await?;
+                                let (header_received, message) = agent.read_message_header(&message)?;
 
                                 match header_received.as_str() {
                                     MESSAGE_DOWNLOAD_FAIL => {
-                                        let download_fail = agent.receive_answer().await?;
+                                        let download_fail = agent.read_answer(message)?;
                                         match download_fail {
                                             FileFail::FileDoesNotExist => {
                                                 writeln!(
@@ -286,7 +301,7 @@ async fn serve_client<NonceSize: ArrayLength<u8>, TS: TagSize>(
                                     }
                                     MESSAGE_DOWNLOAD_SUCCESS => {
                                         let file_name_truncated = Path::new(&file_name).file_name().map(|string| string.to_str().map(|string| string.to_string())).unwrap_or(Some(file_name.clone())).unwrap_or(file_name.clone());
-                                        let file_size = agent.receive_u64().await?;
+                                        let (file_size, _) = agent.read_u64(message)?;
                                         let mut file_path_to_save = PathBuf::from("./");
                                         file_path_to_save.push(&file_name_truncated);
                                         let opened_file = File::create(&file_path_to_save).map_err(|_| {
@@ -297,6 +312,7 @@ async fn serve_client<NonceSize: ArrayLength<u8>, TS: TagSize>(
                                         let file_path = Path::new(&file_name_truncated).canonicalize().unwrap();
 
                                         writeln!(writer, "Downloading file `{}`...", file_name_truncated).map_err(|_| QuickTransferError::Stdout)?;
+                                        rl.flush().map_err(|_| QuickTransferError::Stdout)?;
                                         if let Err(error) = agent.receive_file(opened_file, file_size, file_path.as_path(), false).await {
                                             if let QuickTransferError::WritingFile{file_path} = error {
                                                 writeln!(
@@ -365,10 +381,13 @@ async fn serve_client<NonceSize: ArrayLength<u8>, TS: TagSize>(
                                 let file_name_truncated = Path::new(&file_name).file_name().map(|string| string.to_str().map(|string| string.to_string())).unwrap_or(Some(file_name.clone())).unwrap_or(file_name.clone());
 
                                 writeln!(writer, "Uploading file `{}`...", file_name).map_err(|_| QuickTransferError::Stdout)?;
+                                rl.flush().map_err(|_| QuickTransferError::Stdout)?;
                                 agent.send_upload(opened_file, file_size.len(), &file_name_truncated, file_path).await?;
-                                agent.receive_message_header_check(MESSAGE_UPLOAD_RESULT).await?;
 
-                                let upload_result = agent.receive_answer().await?;
+                                let message = agent.receive_tcp(false).await?;
+                                let message = agent.read_message_header_check(&message, MESSAGE_UPLOAD_RESULT)?;
+                                let upload_result = agent.read_answer(message)?;
+
                                 match upload_result {
                                     UploadResult::Fail(fail) => match fail {
                                         FileFail::ErrorCreatingFile => {
@@ -409,8 +428,10 @@ async fn serve_client<NonceSize: ArrayLength<u8>, TS: TagSize>(
                                 }
 
                                 agent.send_mkdir(&directory_name).await?;
-                                agent.receive_message_header_check(MESSAGE_MKDIRANS).await?;
-                                let mkdir_answer = agent.receive_answer().await?;
+
+                                let message = agent.receive_tcp(false).await?;
+                                let message = agent.read_message_header_check(&message, MESSAGE_MKDIRANS)?;
+                                let mkdir_answer = agent.read_answer(message)?;
 
                                 match mkdir_answer {
                                     MkdirAnswer::DirectoryAlreadyExists => {
@@ -449,8 +470,11 @@ async fn serve_client<NonceSize: ArrayLength<u8>, TS: TagSize>(
                                         ).map_err(|_| QuickTransferError::Stdout)?;
 
                                         agent.send_list_directory().await?;
-                                        agent.receive_message_header_check(MESSAGE_DIR).await?;
-                                        let dir_description = agent.receive_answer().await?;
+
+                                        let message = agent.receive_tcp(false).await?;
+                                        let message = agent.read_message_header_check(&message, MESSAGE_DIR)?;
+                                        let dir_description = agent.read_answer(message)?;
+
                                         if let MessageDirectoryContents::Success(dir_description) = dir_description {
                                             print_directory_contents(&dir_description, &mut writer)?;
                                         }
@@ -463,8 +487,10 @@ async fn serve_client<NonceSize: ArrayLength<u8>, TS: TagSize>(
                                 };
 
                                 agent.send_rename_request(&file_dir_name, &new_name).await?;
-                                agent.receive_message_header_check(MESSAGE_RENAME_ANSWER).await?;
-                                let rename_answer = agent.receive_answer().await?;
+
+                                let message = agent.receive_tcp(false).await?;
+                                let message = agent.read_message_header_check(&message, MESSAGE_RENAME_ANSWER)?;
+                                let rename_answer = agent.read_answer(message)?;
 
                                 match rename_answer {
                                     RenameAnswer::FileDirDoesNotExist => {
@@ -503,8 +529,11 @@ async fn serve_client<NonceSize: ArrayLength<u8>, TS: TagSize>(
                                         ).map_err(|_| QuickTransferError::Stdout)?;
 
                                         agent.send_list_directory().await?;
-                                        agent.receive_message_header_check(MESSAGE_DIR).await?;
-                                        let dir_description = agent.receive_answer().await?;
+
+                                        let message = agent.receive_tcp(false).await?;
+                                        let message = agent.read_message_header_check(&message, MESSAGE_DIR)?;
+                                        let dir_description = agent.read_answer(message)?;
+
                                         if let MessageDirectoryContents::Success(dir_description) = dir_description {
                                             print_directory_contents(&dir_description, &mut writer)?;
                                         }
@@ -518,8 +547,10 @@ async fn serve_client<NonceSize: ArrayLength<u8>, TS: TagSize>(
                                 };
 
                                 agent.send_remove_request(&file_dir_name).await?;
-                                agent.receive_message_header_check(MESSAGE_REMOVE_ANSWER).await?;
-                                let remove_answer = agent.receive_answer().await?;
+
+                                let message = agent.receive_tcp(false).await?;
+                                let message = agent.read_message_header_check(&message, MESSAGE_REMOVE_ANSWER)?;
+                                let remove_answer = agent.read_answer(message)?;
 
                                 match remove_answer {
                                     RemoveAnswer::FileDirDoesNotExist => {
@@ -566,9 +597,11 @@ async fn serve_client<NonceSize: ArrayLength<u8>, TS: TagSize>(
                                         ).map_err(|_| QuickTransferError::Stdout)?;
 
                                         agent.send_list_directory().await?;
-                                        agent.receive_message_header_check(MESSAGE_DIR).await?;
 
-                                        let dir_description = agent.receive_answer().await?;
+                                        let message = agent.receive_tcp(false).await?;
+                                        let message = agent.read_message_header_check(&message, MESSAGE_DIR)?;
+                                        let dir_description = agent.read_answer(message)?;
+
                                         if let MessageDirectoryContents::Success(dir_description) = dir_description {
                                             print_directory_contents(&dir_description, &mut writer)?;
                                         }

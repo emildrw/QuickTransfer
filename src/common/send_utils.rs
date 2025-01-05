@@ -1,43 +1,77 @@
-use aes::cipher::ArrayLength;
-use aes_gcm::TagSize;
+use aes_gcm::{aead::Aead, Nonce};
 use byteorder::{WriteBytesExt, BE};
+use rand::{rngs::OsRng, RngCore};
 use serde::Serialize;
+use tokio::io::AsyncWriteExt;
 use std::{
     fs::File,
-    io::{ErrorKind, Read},
+    io::{self, Read},
     path::Path,
 };
 
 use crate::common::{
     directory_description,
     messages::{
-        MAX_FILE_FRAGMENT_SIZE, MESSAGE_CD, MESSAGE_DIR, MESSAGE_DISCONNECT, MESSAGE_DOWNLOAD,
-        MESSAGE_DOWNLOAD_SUCCESS, MESSAGE_LS, MESSAGE_MKDIR, MESSAGE_UPLOAD,
+        EncryptedMessage, UnencryptedMessage, MAX_FILE_FRAGMENT_SIZE, MESSAGE_CD, MESSAGE_DIR, MESSAGE_DISCONNECT, MESSAGE_DOWNLOAD, MESSAGE_DOWNLOAD_SUCCESS, MESSAGE_LS, MESSAGE_MKDIR, MESSAGE_UPLOAD
     },
     CommunicationAgent, QuickTransferError,
 };
 
-use super::messages::{MessageDirectoryContents, MESSAGE_REMOVE, MESSAGE_RENAME};
+use super::{map_tcp_error, messages::{MessageDirectoryContents, MESSAGE_REMOVE, MESSAGE_RENAME}, QuickTransferStream};
+use crate::common::QuickTransferStreamOption;
 
-impl<NonceSize: ArrayLength<u8>, TS: TagSize> CommunicationAgent<'_, NonceSize, TS> {
-    /// Send bytes from message over TCP.
+impl QuickTransferStream {
     async fn send_tcp(&mut self, message: &[u8], flush: bool) -> Result<(), QuickTransferError> {
-        self.stream.write_all(message).await.map_err(|err| {
-            if let ErrorKind::UnexpectedEof = err.kind() {
-                QuickTransferError::RemoteClosedConnection(self.role)
-            } else {
-                QuickTransferError::ErrorWhileSendingMessage(self.role)
-            }
-        })?;
+        let message_to_send = match &mut self.option {
+            QuickTransferStreamOption::Unencrypted => {
+                let mut message_to_send: Vec<u8> = vec![];
+                let message = bincode::serialize(&UnencryptedMessage{content: Vec::from(message)}).unwrap();
 
+                // We assume that usize <= u64:
+                WriteBytesExt::write_u64::<BE>(&mut message_to_send, message.len().try_into().unwrap()).unwrap();
+                message_to_send.extend(message);
+
+                message_to_send
+            }
+            QuickTransferStreamOption::Encrypted{cipher, ..} => {
+                let mut nonce = vec![0u8; 12];
+                OsRng.fill_bytes(&mut nonce);
+                let nonce_array = Nonce::from_slice(&nonce);
+                let cipher_text = cipher.encrypt(nonce_array, message).map_err(|_| QuickTransferError::Ciphering)?;
+
+                let mut message_to_send: Vec<u8> = vec![];
+                let message = bincode::serialize(&EncryptedMessage{nonce, content: cipher_text}).unwrap();
+
+                // We assume that usize <= u64:
+                WriteBytesExt::write_u64::<BE>(&mut message_to_send, message.len().try_into().unwrap()).unwrap();
+                message_to_send.extend(message);
+
+                message_to_send
+            }
+        };
+        self.stream.write_all(&message_to_send).await.map_err(|error| map_tcp_error(error, self.role))?;
         if flush {
-            self.stream
-                .flush()
-                .await
-                .map_err(|_| QuickTransferError::ErrorWhileSendingMessage(self.role))?;
+            self.stream.flush().await.map_err(|_| QuickTransferError::ErrorWhileSendingMessage(self.role))?;
         }
 
         Ok(())
+    }
+    pub async fn send_bare_message(&mut self, message: &str) -> Result<(), QuickTransferError> {
+        let message = message.as_bytes();
+        self.stream.write_all(message).await.map_err(|error| map_tcp_error(error, self.role))?;
+
+        self.stream.flush().await.map_err(|_: io::Error| {
+            QuickTransferError::ErrorWhileSendingMessage(self.role)
+        })?;
+
+        Ok(())
+    }
+}
+
+impl CommunicationAgent<'_> {
+    /// Send bytes from message over TCP.
+    async fn send_tcp(&mut self, message: &[u8], flush: bool) -> Result<(), QuickTransferError> {
+        self.stream.send_tcp(message, flush).await
     }
 
     /// Sends directory description: header, description length, description.

@@ -68,11 +68,12 @@ fn parse_arguments() -> Option<ProgramOptions> {
             eprintln!("The path `{}` to AES key does not exist.", aes_key_file);
             return None;
         };
-        aes_key = Some([0; 32]);
-        if opened_file.read_exact(&mut aes_key.unwrap()).is_err() {
+        let mut key = [0; 32];
+        if opened_file.read_exact(&mut key).is_err() {
             eprintln!("File {} is shorter than 32 bytes!", aes_key_file);
             return None;
         }
+        aes_key = Some(key);
     }
 
     if parsing_result.is_ok() {
