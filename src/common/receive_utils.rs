@@ -11,17 +11,13 @@ use std::{
 use tokio::{io::AsyncReadExt, time::timeout};
 
 use crate::common::{
-    messages::{EncryptedMessage, HEADER_NAME_LENGTH, MESSAGE_LENGTH_LENGTH},
-    CommunicationAgent, QuickTransferError,
+    map_tcp_error,
+    messages::{EncryptedMessage, UnencryptedMessage, HEADER_NAME_LENGTH, MESSAGE_LENGTH_LENGTH},
+    CommunicationAgent, QuickTransferError, QuickTransferStream, QuickTransferStreamOption,
 };
 
-use crate::common::QuickTransferStream;
-use crate::common::QuickTransferStreamOption;
-
-use super::{map_tcp_error, messages::UnencryptedMessage};
-
 impl QuickTransferStream {
-    /// TODO
+    /// Receives one wrapped message from TCP channel.
     async fn receive_tcp(&mut self, wait: bool) -> Result<Vec<u8>, QuickTransferError> {
         let mut message_length_buffer: [u8; 8] = [0_u8; MESSAGE_LENGTH_LENGTH];
         if wait {
@@ -47,7 +43,9 @@ impl QuickTransferStream {
             }
         }
 
-        let bytes_to_receive = ReadBytesExt::read_u64::<BE>(&mut Cursor::new(message_length_buffer.to_vec())).map_err(|_| QuickTransferError::SentInvalidData(self.role))?;
+        let bytes_to_receive =
+            ReadBytesExt::read_u64::<BE>(&mut Cursor::new(message_length_buffer.to_vec()))
+                .map_err(|_| QuickTransferError::SentInvalidData(self.role))?;
         let mut received_data: Vec<u8> = vec![0_u8; bytes_to_receive.try_into().unwrap()];
 
         let status = self.stream.read_exact(&mut received_data);
@@ -59,25 +57,33 @@ impl QuickTransferStream {
                 result.map_err(|error| map_tcp_error(error, self.role))?;
             }
         }
-    
+
         match &mut self.option {
             QuickTransferStreamOption::Unencrypted => {
-                let deserialized_message: UnencryptedMessage = bincode::deserialize(&received_data).map_err(|_| QuickTransferError::SentInvalidData(self.role))?;
+                let deserialized_message: UnencryptedMessage = bincode::deserialize(&received_data)
+                    .map_err(|_| QuickTransferError::SentInvalidData(self.role))?;
 
                 Ok(deserialized_message.content)
             }
             QuickTransferStreamOption::Encrypted { cipher, .. } => {
-                let deserialized_message: EncryptedMessage = bincode::deserialize(&received_data).map_err(|_| QuickTransferError::SentInvalidData(self.role))?;
+                let deserialized_message: EncryptedMessage =
+                    bincode::deserialize(&received_data)
+                        .map_err(|_| QuickTransferError::SentInvalidData(self.role))?;
                 let nonce_array = Nonce::from_slice(&deserialized_message.nonce);
 
-                let plain_text = cipher.decrypt(nonce_array, deserialized_message.content.as_ref()).map_err(|_| QuickTransferError::Deciphering)?;
+                let plain_text = cipher
+                    .decrypt(nonce_array, deserialized_message.content.as_ref())
+                    .map_err(|_| QuickTransferError::Deciphering)?;
 
                 Ok(plain_text)
             }
         }
     }
-    /// TODO
-    pub async fn receive_bare_message_header(&mut self, timeout: u16) -> Result<String, QuickTransferError> {
+    /// Receives a bare message (sent directly on TCP stream).
+    pub async fn receive_bare_message_header(
+        &mut self,
+        timeout: u16,
+    ) -> Result<String, QuickTransferError> {
         let mut message_header_buffer: [u8; 8] = [0_u8; HEADER_NAME_LENGTH];
 
         let status = self.stream.read_exact(&mut message_header_buffer);
@@ -90,8 +96,8 @@ impl QuickTransferStream {
             }
         }
 
-        let header_received =
-            str::from_utf8(&message_header_buffer).map_err(|_| QuickTransferError::SentInvalidData(self.role))?;
+        let header_received = str::from_utf8(&message_header_buffer)
+            .map_err(|_| QuickTransferError::SentInvalidData(self.role))?;
 
         Ok(String::from(header_received))
     }
@@ -105,7 +111,11 @@ impl CommunicationAgent<'_> {
     }
 
     /// Receives a string (reads exactly `string_length` bytes so as to receive it).
-    pub fn read_string<'a>(&mut self, message: &'a [u8], string_length: u64) -> Result<(String, &'a [u8]), QuickTransferError> {
+    pub fn read_string<'a>(
+        &mut self,
+        message: &'a [u8],
+        string_length: u64,
+    ) -> Result<(String, &'a [u8]), QuickTransferError> {
         let string_length: usize = string_length.try_into().unwrap();
         let string = str::from_utf8(&message[..string_length])
             .map_err(|_| QuickTransferError::SentInvalidData(self.role))?;
@@ -114,10 +124,13 @@ impl CommunicationAgent<'_> {
     }
 
     /// Reads a message header string (takes 8 bytes).
-    pub fn read_message_header<'a>(&mut self, message: &'a [u8]) -> Result<(String, &'a [u8]), QuickTransferError> {
+    pub fn read_message_header<'a>(
+        &mut self,
+        message: &'a [u8],
+    ) -> Result<(String, &'a [u8]), QuickTransferError> {
         self.read_string(message, HEADER_NAME_LENGTH.try_into().unwrap())
     }
-    
+
     /// Receives (waits) a message header string (takes 8 bytes).
     pub async fn receive_message_header(&mut self) -> Result<String, QuickTransferError> {
         let message = self.receive_tcp(true).await?;
@@ -127,7 +140,11 @@ impl CommunicationAgent<'_> {
     }
 
     /// Reads a message header and automatically ensures it is equal to `message_header`.
-    pub fn read_message_header_check<'a>(&mut self, message: &'a [u8], message_header: &str) -> Result<&'a [u8], QuickTransferError> {
+    pub fn read_message_header_check<'a>(
+        &mut self,
+        message: &'a [u8],
+        message_header: &str,
+    ) -> Result<&'a [u8], QuickTransferError> {
         let (received_header, message) = self.read_message_header(message)?;
 
         if received_header != message_header {
@@ -138,21 +155,32 @@ impl CommunicationAgent<'_> {
     }
 
     /// Receives a big-endian representation of a number (message length/file size/string size etc.) (takes 8 bytes).
-    pub fn read_u64<'a>(&mut self, message: &'a [u8]) -> Result<(u64, &'a [u8]), QuickTransferError> {
-        let read_number = ReadBytesExt::read_u64::<BE>(&mut Cursor::new(message[..MESSAGE_LENGTH_LENGTH].to_vec()))
-            .map_err(|_| QuickTransferError::SentInvalidData(self.role))?;
+    pub fn read_u64<'a>(
+        &mut self,
+        message: &'a [u8],
+    ) -> Result<(u64, &'a [u8]), QuickTransferError> {
+        let read_number = ReadBytesExt::read_u64::<BE>(&mut Cursor::new(
+            message[..MESSAGE_LENGTH_LENGTH].to_vec(),
+        ))
+        .map_err(|_| QuickTransferError::SentInvalidData(self.role))?;
 
         Ok((read_number, &message[MESSAGE_LENGTH_LENGTH..]))
     }
 
     /// Reads a string (its length and itself).
-    pub fn read_length_with_string<'a>(&mut self, message: &'a [u8]) -> Result<(String, &'a [u8]), QuickTransferError> {
+    pub fn read_length_with_string<'a>(
+        &mut self,
+        message: &'a [u8],
+    ) -> Result<(String, &'a [u8]), QuickTransferError> {
         let (string_length, message) = self.read_u64(message)?;
         self.read_string(message, string_length)
     }
 
     /// Reads an answer.
-    pub fn read_answer<'a, T: DeserializeOwned>(&mut self, message: &'a [u8]) -> Result<T, QuickTransferError> {
+    pub fn read_answer<T: DeserializeOwned>(
+        &mut self,
+        message: &[u8],
+    ) -> Result<T, QuickTransferError> {
         let (_, message) = self.read_u64(message)?;
         let deserialized_answer: T = bincode::deserialize(message).unwrap();
 

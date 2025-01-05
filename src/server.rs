@@ -2,19 +2,29 @@ use aes_gcm::{aead::KeyInit, Aes256Gcm, Key};
 use colored::*;
 use rustyline_async::{Readline, ReadlineEvent, SharedWriter};
 use std::{
-    fs::{self, File}, io::{ErrorKind, Write}, net::SocketAddr, ops::Deref, path::{Path, PathBuf}, sync::{
+    fs::{self, File},
+    io::{ErrorKind, Write},
+    net::SocketAddr,
+    ops::Deref,
+    path::{Path, PathBuf},
+    sync::{
         atomic::{AtomicUsize, Ordering},
         Arc,
-    }
+    },
 };
 use tokio::{
-    net::TcpListener, sync::broadcast::{self, Receiver, Sender}
+    net::TcpListener,
+    sync::broadcast::{self, Receiver, Sender},
 };
 
 use crate::common::{
     directory_description,
     messages::{
-        CdAnswer, FileFail, MkdirAnswer, RemoveAnswer, RenameAnswer, UploadResult, MESSAGE_CD, MESSAGE_CDANSWER, MESSAGE_DISCONNECT, MESSAGE_DOWNLOAD, MESSAGE_DOWNLOAD_FAIL, MESSAGE_INIT, MESSAGE_INIT_ENC, MESSAGE_LS, MESSAGE_MKDIR, MESSAGE_MKDIRANS, MESSAGE_NOT_ENC, MESSAGE_OK, MESSAGE_REMOVE, MESSAGE_REMOVE_ANSWER, MESSAGE_RENAME, MESSAGE_RENAME_ANSWER, MESSAGE_UPLOAD, MESSAGE_UPLOAD_RESULT
+        CdAnswer, FileFail, MkdirAnswer, RemoveAnswer, RenameAnswer, UploadResult, MESSAGE_CD,
+        MESSAGE_CDANSWER, MESSAGE_DISCONNECT, MESSAGE_DOWNLOAD, MESSAGE_DOWNLOAD_FAIL,
+        MESSAGE_INIT, MESSAGE_INIT_ENC, MESSAGE_LS, MESSAGE_MKDIR, MESSAGE_MKDIRANS,
+        MESSAGE_NOT_ENC, MESSAGE_OK, MESSAGE_REMOVE, MESSAGE_REMOVE_ANSWER, MESSAGE_RENAME,
+        MESSAGE_RENAME_ANSWER, MESSAGE_UPLOAD, MESSAGE_UPLOAD_RESULT,
     },
     CommunicationAgent, ProgramOptions, ProgramRole, QuickTransferError, QuickTransferStream,
 };
@@ -188,7 +198,7 @@ async fn create_a_listener(
 }
 
 /// Handles the client once it is connected on some TCP stream.
-async fn handle_client_as_a_server (
+async fn handle_client_as_a_server(
     mut stream: QuickTransferStream,
     client_address: SocketAddr,
     program_options: &ProgramOptions,
@@ -203,13 +213,11 @@ async fn handle_client_as_a_server (
     let mut is_connection_encrypted = false;
 
     match agent.receive_bare_message_header().await?.as_str() {
-        MESSAGE_INIT => {
-            
-        }
+        MESSAGE_INIT => {}
         MESSAGE_INIT_ENC => {
             if let Some(key) = &program_options.aes_key {
                 let key: &Key<Aes256Gcm> = key.into();
-                let cipher = Aes256Gcm::new(&key);
+                let cipher = Aes256Gcm::new(key);
                 agent.change_to_encrypted(cipher);
                 is_connection_encrypted = true;
             } else {
@@ -218,7 +226,9 @@ async fn handle_client_as_a_server (
             }
         }
         _ => {
-            return Err(QuickTransferError::SentInvalidData(program_options.program_role));
+            return Err(QuickTransferError::SentInvalidData(
+                program_options.program_role,
+            ));
         }
     }
 
@@ -239,7 +249,9 @@ async fn handle_client_as_a_server (
             "encrypted"
         } else {
             "not encrypted"
-        }.green().bold(),
+        }
+        .green()
+        .bold(),
         ")".green().bold(),
     )
     .map_err(|_| QuickTransferError::Stdout)?;

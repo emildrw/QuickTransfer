@@ -10,7 +10,11 @@ use tokio::net::TcpStream;
 
 use crate::common::{
     messages::{
-        CdAnswer, DirectoryContents, FileFail, MessageDirectoryContents, MkdirAnswer, RemoveAnswer, RenameAnswer, UploadResult, MESSAGE_CDANSWER, MESSAGE_DIR, MESSAGE_DISCONNECT, MESSAGE_DOWNLOAD_FAIL, MESSAGE_DOWNLOAD_SUCCESS, MESSAGE_INIT, MESSAGE_INIT_ENC, MESSAGE_MKDIRANS, MESSAGE_NOT_ENC, MESSAGE_OK, MESSAGE_REMOVE_ANSWER, MESSAGE_RENAME_ANSWER, MESSAGE_UPLOAD_RESULT
+        CdAnswer, DirectoryContents, FileFail, MessageDirectoryContents, MkdirAnswer, RemoveAnswer,
+        RenameAnswer, UploadResult, MESSAGE_CDANSWER, MESSAGE_DIR, MESSAGE_DISCONNECT,
+        MESSAGE_DOWNLOAD_FAIL, MESSAGE_DOWNLOAD_SUCCESS, MESSAGE_INIT, MESSAGE_INIT_ENC,
+        MESSAGE_MKDIRANS, MESSAGE_NOT_ENC, MESSAGE_OK, MESSAGE_REMOVE_ANSWER,
+        MESSAGE_RENAME_ANSWER, MESSAGE_UPLOAD_RESULT,
     },
     CommunicationAgent, ProgramOptions, ProgramRole, QuickTransferError, QuickTransferStream,
 };
@@ -26,12 +30,17 @@ pub async fn handle_client(program_options: &ProgramOptions) -> Result<(), Quick
 
     let mut stream = if let Some(key) = &program_options.aes_key {
         let key: &Key<Aes256Gcm> = key.into();
-        let cipher = Aes256Gcm::new(&key);
-        QuickTransferStream::new_encrypted(stream, cipher, ProgramRole::Client, program_options.timeout)
+        let cipher = Aes256Gcm::new(key);
+        QuickTransferStream::new_encrypted(
+            stream,
+            cipher,
+            ProgramRole::Client,
+            program_options.timeout,
+        )
     } else {
         QuickTransferStream::new_unencrypted(stream, ProgramRole::Client, program_options.timeout)
     };
-    
+
     let mut agent =
         CommunicationAgent::new(&mut stream, ProgramRole::Client, program_options.timeout);
     let result = serve_client(program_options, &mut agent).await;
@@ -45,23 +54,23 @@ pub async fn handle_client(program_options: &ProgramOptions) -> Result<(), Quick
 }
 
 /// This functions server program run in client mode. Returns whether the client has disconnected.
-async fn serve_client (
+async fn serve_client(
     program_options: &ProgramOptions,
     agent: &mut CommunicationAgent<'_>,
 ) -> Result<bool, QuickTransferError> {
-    agent.send_bare_message(if program_options.aes_key.is_some() {
-        MESSAGE_INIT_ENC
-    } else {
-        MESSAGE_INIT
-    }).await?;
+    agent
+        .send_bare_message(if program_options.aes_key.is_some() {
+            MESSAGE_INIT_ENC
+        } else {
+            MESSAGE_INIT
+        })
+        .await?;
 
     match agent.receive_bare_message_header().await?.as_str() {
         MESSAGE_NOT_ENC => {
             return Err(QuickTransferError::ServerDoesNotSupportEncryption);
         }
-        MESSAGE_OK => {
-
-        }
+        MESSAGE_OK => {}
         _ => {
             return Err(QuickTransferError::SentInvalidData(ProgramRole::Client));
         }
@@ -70,15 +79,20 @@ async fn serve_client (
     println!(
         "{}{}{}{}{}",
         "Successfully connected to ".green().bold(),
-        format!("[{}]:{}", program_options.server_ip_address, program_options.port)
-            .on_green()
-            .white(),
+        format!(
+            "[{}]:{}",
+            program_options.server_ip_address, program_options.port
+        )
+        .on_green()
+        .white(),
         "! (connection ".green().bold(),
         if program_options.aes_key.is_some() {
             "encrypted"
         } else {
             "not encrypted"
-        }.green().bold(),
+        }
+        .green()
+        .bold(),
         ")".green().bold(),
     );
 
@@ -87,7 +101,7 @@ async fn serve_client (
     let mut rl = rl.0;
     let message_received = agent.receive_tcp(false).await?;
     let message_received = agent.read_message_header_check(&message_received, MESSAGE_DIR)?;
-    if let Ok(dir_description) = agent.read_answer::<MessageDirectoryContents>(&message_received) {
+    if let Ok(dir_description) = agent.read_answer::<MessageDirectoryContents>(message_received) {
         if let MessageDirectoryContents::Success(dir_description) = &dir_description {
             print_directory_contents(dir_description, &mut writer)?;
         } else {
@@ -100,7 +114,7 @@ async fn serve_client (
             )
             .map_err(|_| QuickTransferError::Stdout)?;
             writer.flush().map_err(|_| QuickTransferError::Stdout)?;
-    
+
             return Err(QuickTransferError::Other);
         }
     } else {

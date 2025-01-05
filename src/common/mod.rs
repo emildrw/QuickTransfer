@@ -1,9 +1,12 @@
-use core::fmt;
 use aes::{cipher::typenum, Aes256};
 use aes_gcm::AesGcm;
+use core::fmt;
 use messages::{DirectoryContents, DirectoryPosition, MessageDirectoryContents};
 use std::{
-    fs::{self, DirEntry}, io::{self, ErrorKind}, path::Path, str
+    fs::{self, DirEntry},
+    io::{self, ErrorKind},
+    path::Path,
+    str,
 };
 use thiserror::Error;
 use tokio::net::TcpStream;
@@ -63,7 +66,11 @@ pub struct CommunicationAgent<'a> {
 }
 
 impl CommunicationAgent<'_> {
-    pub fn new(stream: &mut QuickTransferStream, role: ProgramRole, timeout: u16) -> CommunicationAgent {
+    pub fn new(
+        stream: &mut QuickTransferStream,
+        role: ProgramRole,
+        timeout: u16,
+    ) -> CommunicationAgent {
         CommunicationAgent {
             stream,
             role,
@@ -76,9 +83,7 @@ type CipherType = AesGcm<Aes256, typenum::U12, typenum::U16>;
 
 enum QuickTransferStreamOption {
     Unencrypted,
-    Encrypted {
-        cipher: CipherType
-    },
+    Encrypted { cipher: Box<CipherType> },
 }
 
 pub struct QuickTransferStream {
@@ -89,7 +94,11 @@ pub struct QuickTransferStream {
 }
 
 impl QuickTransferStream {
-    pub fn new_unencrypted(stream: TcpStream, role: ProgramRole, timeout: u16) -> QuickTransferStream {
+    pub fn new_unencrypted(
+        stream: TcpStream,
+        role: ProgramRole,
+        timeout: u16,
+    ) -> QuickTransferStream {
         QuickTransferStream {
             option: QuickTransferStreamOption::Unencrypted,
             stream,
@@ -97,19 +106,24 @@ impl QuickTransferStream {
             timeout,
         }
     }
-    pub fn new_encrypted(stream: TcpStream, cipher: CipherType, role: ProgramRole, timeout: u16) -> QuickTransferStream {
+    pub fn new_encrypted(
+        stream: TcpStream,
+        cipher: CipherType,
+        role: ProgramRole,
+        timeout: u16,
+    ) -> QuickTransferStream {
         QuickTransferStream {
             option: QuickTransferStreamOption::Encrypted {
-                cipher,
+                cipher: Box::new(cipher),
             },
             stream,
-            role: role,
+            role,
             timeout,
         }
     }
-    pub fn change_to_encrypted(&mut self, cipher: CipherType,) {
+    pub fn change_to_encrypted(&mut self, cipher: CipherType) {
         self.option = QuickTransferStreamOption::Encrypted {
-            cipher,
+            cipher: Box::new(cipher),
         };
     }
 }

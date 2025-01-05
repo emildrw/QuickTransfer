@@ -6,7 +6,9 @@ mod client;
 mod common;
 mod server;
 
-use common::{ProgramOptions, ProgramRole, QuickTransferError, DEFAULT_PORT, DEFAULT_TIMEOUT};
+use crate::common::{
+    ProgramOptions, ProgramRole, QuickTransferError, DEFAULT_PORT, DEFAULT_TIMEOUT,
+};
 
 /// Parses program arguments.
 fn parse_arguments() -> Option<ProgramOptions> {
