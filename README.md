@@ -22,6 +22,7 @@ Program can be run with the following command:
 ```
 Positional arguments:
 - `server's address` -- In client mode: **address**, to which the program should connect (IP/domain name); in server mode: the **interface** (as the host's address) on which the program should listen on (server defaults listens on all interfaces). Argument required.
+
 Optional arguments:
 - `-h, --help` -- Show this help message and exit
 - `-s, --server` -- Run QuickTransfer in server mode
