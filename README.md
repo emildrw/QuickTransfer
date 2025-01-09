@@ -29,7 +29,7 @@ Optional arguments:
 - `-p, --port PORT` -- In client mode: port, to which the program should connect on the server; in server mode: port, on which the program should listen on. The value should be between 0-65535. Default: `47842`
 - `-r, --root ROOT` -- Specify, which directory will be the root of filesystem shared with clients (as a server). Default: `./`
 - `-t, --timeout TIMEOUT` -- Specify timeout (in seconds) for waiting for the whole message. Default: `5`
-- `-k, --key KEY` -- Path to 32-byte file holding an AES key (pure bytes). If not specified, the connection won't be encrypted.;
+- `-k, --key KEY` -- Path to 32-byte file holding an AES key (pure bytes). If not specified, the connection won't be encrypted.
 
 ## Program operation
 QuickTransfer provides an intuitive input/output system for operating with files on the server (from client). There are some commands that user may use for that purpose:
@@ -107,6 +107,7 @@ These structures are preceded by 8 bytes encoding the length of the structure. T
         2. Client also closes the connection and exits. 
 
 ### Important notes
+- Server runs until it is manually turned off.
 - **If a file to be downloaded/uploaded already exists, it'll be overwritten.**
 - If QuickTransfer doesn't have rights to modify/write a file, then an error occurs:
     - It that was the server: it sends a "DOWNLOAD_FAIL" to the client

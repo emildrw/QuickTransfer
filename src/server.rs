@@ -66,7 +66,7 @@ pub async fn handle_server(program_options: ProgramOptions) -> Result<(), QuickT
                     connected_clients.fetch_sub(1, Ordering::Relaxed);
                     rl.flush().map_err(|_| QuickTransferError::Stdout)?;
 
-                    if check_clients_number_and_stop(&connected_clients, &tx_stop, closed_from_server.unwrap())? {
+                    if closed_from_server.unwrap_or(true) && check_clients_number_and_stop(&connected_clients, &tx_stop, true)? {
                         return Ok(())
                     }
                 }
@@ -173,9 +173,9 @@ fn check_clients_number_and_stop(
 ) -> Result<bool, QuickTransferError> {
     if connected_clients.load(Ordering::Relaxed) == 0 {
         tx_stop.send((true, closed_from_server)).unwrap();
-        if !closed_from_server {
-            println!("{}", "All clients have disconnected.".green().bold());
-        }
+        // if !closed_from_server {
+        //     println!("{}", "All clients have disconnected.".green().bold());
+        // }
 
         return Ok(true);
     }
