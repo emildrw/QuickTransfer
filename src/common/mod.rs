@@ -282,3 +282,174 @@ pub enum QuickTransferError {
     #[error("")]
     Other,
 }
+
+#[cfg(test)]
+mod test {
+    use aes::cipher::generic_array::GenericArray;
+    use aes_gcm::{aead::Aead, Aes256Gcm, Key, KeyInit};
+    use byteorder::{ReadBytesExt, WriteBytesExt, BE};
+    use io::Cursor;
+    use tokio::{
+        io::{AsyncReadExt, AsyncWriteExt},
+        net::TcpListener,
+    };
+
+    use super::*;
+
+    #[tokio::test]
+    async fn test_send_bare_message() {
+        let listener = TcpListener::bind("::1:9990").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut buf = vec![0; 1024];
+            let n = socket.read(&mut buf).await.unwrap();
+            assert_eq!(&buf[..n], b"Hello, world!");
+        });
+
+        let stream = TcpStream::connect(addr).await.unwrap();
+        let mut quick_transfer_stream =
+            QuickTransferStream::new_unencrypted(stream, ProgramRole::Client, DEFAULT_TIMEOUT);
+        let mut agent = CommunicationAgent::new(
+            &mut quick_transfer_stream,
+            ProgramRole::Client,
+            DEFAULT_TIMEOUT,
+        );
+
+        agent.send_bare_message("Hello, world!").await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_receive_bare_message_header() {
+        let listener = TcpListener::bind("::1:9991").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            socket.write_all(b"HEADERMS").await.unwrap();
+        });
+
+        let stream = TcpStream::connect(addr).await.unwrap();
+        let mut quick_transfer_stream =
+            QuickTransferStream::new_unencrypted(stream, ProgramRole::Client, DEFAULT_TIMEOUT);
+        let mut agent = CommunicationAgent::new(
+            &mut quick_transfer_stream,
+            ProgramRole::Client,
+            DEFAULT_TIMEOUT,
+        );
+
+        let header = agent.receive_bare_message_header().await.unwrap();
+        assert_eq!(header, "HEADERMS");
+    }
+
+    #[tokio::test]
+    async fn test_change_to_encrypted() {
+        let listener = TcpListener::bind("::1:9992").await.unwrap();
+
+        tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            socket.write_all(b"HEADERMS").await.unwrap();
+        });
+
+        let stream = TcpStream::connect("::1:9992").await.unwrap();
+        let mut quick_transfer_stream =
+            QuickTransferStream::new_unencrypted(stream, ProgramRole::Client, DEFAULT_TIMEOUT);
+        let mut agent = CommunicationAgent::new(
+            &mut quick_transfer_stream,
+            ProgramRole::Client,
+            DEFAULT_TIMEOUT,
+        );
+
+        let key = GenericArray::from_slice(&[0u8; 32]);
+        let cipher = AesGcm::new(key);
+        agent.change_to_encrypted(cipher);
+
+        if let QuickTransferStreamOption::Encrypted { .. } = agent.stream.option {
+            // Test passed
+        } else {
+            panic!("Stream was not changed to encrypted");
+        }
+
+        agent.receive_bare_message_header().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_send_encrypted_message() {
+        let listener = TcpListener::bind("::1:9993").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut buf = vec![0; 1024];
+            let n = socket.read(&mut buf).await.unwrap();
+            // Assuming the message is encrypted, we can't assert the content directly
+            assert!(n > 0);
+        });
+
+        let stream = TcpStream::connect(addr).await.unwrap();
+        let key = GenericArray::from_slice(&[0u8; 32]);
+        let cipher = Aes256Gcm::new(key);
+        let mut quick_transfer_stream = QuickTransferStream::new_encrypted(
+            stream,
+            cipher,
+            ProgramRole::Client,
+            DEFAULT_TIMEOUT,
+        );
+        let mut agent = CommunicationAgent::new(
+            &mut quick_transfer_stream,
+            ProgramRole::Client,
+            DEFAULT_TIMEOUT,
+        );
+
+        agent
+            .send_bare_message("Hello, encrypted world!")
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_receive_encrypted_message_header() {
+        let listener = TcpListener::bind("::1:9994").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let nonce = GenericArray::from_slice(&[45_u8; 12]);
+        let test_str = "I_NEED_TO_SOME_TEXT_OF_LENGTH_32";
+
+        tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let key: &Key<Aes256Gcm> = GenericArray::from_slice(&[56_u8; 32]);
+            let cipher: CipherType = Aes256Gcm::new(key);
+            let cipher_text = cipher.encrypt(nonce, test_str.as_ref()).unwrap();
+            println!("cipher: {:?}", cipher_text);
+
+            let mut length_to_send: Vec<u8> = vec![];
+            WriteBytesExt::write_u64::<BE>(
+                &mut length_to_send,
+                cipher_text.len().try_into().unwrap(),
+            )
+            .unwrap();
+
+            socket.write_all(&length_to_send).await.unwrap();
+            socket.write_all(&cipher_text).await.unwrap();
+
+            eprintln!("OK_end");
+        });
+
+        let mut stream = TcpStream::connect(addr).await.unwrap();
+        let key: &Key<Aes256Gcm> = GenericArray::from_slice(&[56_u8; 32]);
+        let cipher: CipherType = Aes256Gcm::new(key);
+
+        let mut buf_len = [0_u8; 8].to_vec();
+        stream.read_exact(&mut buf_len).await.unwrap();
+        let bytes_to_receive =
+            ReadBytesExt::read_u64::<BE>(&mut Cursor::new(buf_len.to_vec())).unwrap();
+
+        let mut buf: Vec<u8> = vec![0_u8; bytes_to_receive.try_into().unwrap()];
+        stream.read_exact(&mut buf).await.unwrap();
+
+        println!("received: {:?}", buf);
+        let received_text = cipher.decrypt(nonce, buf.as_ref());
+
+        assert_eq!(received_text.unwrap(), test_str.as_bytes());
+    }
+}

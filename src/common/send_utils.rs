@@ -336,3 +336,38 @@ impl CommunicationAgent<'_> {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod test {
+    use tokio::{
+        io::AsyncReadExt,
+        net::{TcpListener, TcpStream},
+    };
+
+    use crate::common::{ProgramRole, QuickTransferStream, QuickTransferStreamOption};
+
+    #[tokio::test]
+    async fn test_send_tcp() {
+        let listener = TcpListener::bind("localhost:8081").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut buffer = vec![0; 1024];
+            let n = socket.read(&mut buffer).await.unwrap();
+            assert!(n > 0);
+        });
+
+        let stream = TcpStream::connect(addr).await.unwrap();
+        let mut quick_transfer_stream = QuickTransferStream {
+            stream,
+            option: QuickTransferStreamOption::Unencrypted,
+            role: ProgramRole::Client,
+            timeout: 1,
+        };
+
+        let message = b"Test message";
+        let result = quick_transfer_stream.send_tcp(message, true).await;
+        assert!(result.is_ok());
+    }
+}

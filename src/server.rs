@@ -483,3 +483,23 @@ fn preprint_user_help(help_msg: &mut String) {
     help_msg.push_str("  exit; disconnect; quit         Gracefully disconnect all clients\n");
     help_msg.push_str("                                 and exit QuickTransfer.\n");
 }
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_create_a_listener() {
+        let program_options = ProgramOptions {
+            program_role: ProgramRole::Server,
+            server_ip_address: String::from("127.0.0.1"),
+            port: 8080,
+            root_directory: String::from("./"),
+            timeout: 5,
+            aes_key: None,
+        };
+
+        let listener = create_a_listener(&program_options).await;
+        assert!(listener.is_ok());
+    }
+}
