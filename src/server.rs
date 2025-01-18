@@ -105,7 +105,11 @@ pub async fn handle_server(program_options: ProgramOptions) -> Result<(), QuickT
                                     rl.clear().map_err(|_| QuickTransferError::Stdout)?;
                                 }
                                 Some("exit") | Some("disconnect") | Some("quit") => {
-                                    tx_stop.send((false, true)).unwrap();
+                                    if check_clients_number_and_stop(&connected_clients, &tx_stop, true)? {
+                                        return Ok(())
+                                    } else {
+                                        tx_stop.send((false, true)).unwrap();
+                                    }
                                 }
                                 Some("help") => {
                                     Write::write(&mut writer, user_help.as_bytes()).map_err(|_| QuickTransferError::Stdout)?;
