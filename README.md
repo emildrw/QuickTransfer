@@ -8,10 +8,10 @@ cargo build -r
 ```
 
 ## Platforms tested
-QuickTransfer has been tested on Linux and Windows 11. However, when establishing a server on Windows 11, the interface on which the server should run, must be specified.
+QuickTransfer has been tested on Linux (Ubuntu 22.04.5 LTS) and Windows 11 (24H2). However, when establishing a server on Windows 11, the interface on which the server should run, must be specified.
 
 ## Description
-QuickTransfer can be run either in **client** or **server** mode. In the first case, the program tries to connect to the given server (by their IP address) and upon successfully connected, it starts communicating with the server. Server listens on a given interface and once a client is connected, it handles it and exists.
+QuickTransfer can be run either in **client** or **server** mode. In the first case, the program tries to connect to the given server (by their IP address) and upon successfully connected, it starts communicating with the server. Server listens on a given interface and once a client is connected, it is being served.
 
 ## Program options
 Program can be run with the following command:
@@ -20,6 +20,7 @@ Program can be run with the following command:
 ```
 Positional arguments:
 - `server's address` -- In client mode: **address**, to which the program should connect (IP/domain name); in server mode: the **interface** (as the host's address) on which the program should listen on (server defaults listens on all interfaces). Argument required.
+
 Optional arguments:
 - `-h, --help` -- Show this help message and exit
 - `-s, --server` -- Run QuickTransfer in server mode
@@ -39,7 +40,7 @@ QuickTransfer provides an intuitive input/output system for operating with files
 - `exit; disconnect; quit` -- Gracefully disconnect and exit QuickTransfer.
 
 ## Program protocol
-`QuickTransfer` works on **TCP**.
+`QuickTransfer` works over **TCP**.
 
 All messages' exchanged within client and server have headers: they are a sequence of 8 bytes -- an id of the message type.
 
@@ -93,6 +94,7 @@ All messages' exchanged within client and server have headers: they are a sequen
         2. Client also closes the connection and exits. 
 
 ### Important notes
+- Server runs until it is manually turned off.
 - **If a file to be downloaded/uploaded already exists, it'll be overridden.**
 - If QuickTransfer doesn't have rights to modify/write a file, then an error occurs:
     - It that was the server: it sends a DOWNLOAD_FAIL to the client

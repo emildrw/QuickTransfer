@@ -18,19 +18,23 @@ use crate::common::{
 impl CommunicationAgent<'_> {
     /// Receives exactly this number of bytes to fill the buffer from TCP.
     /// If wait == true, then timeout for the first byte is not set.
-    async fn receive_tcp(&mut self, message_buffer: &mut [u8], wait: bool) -> Result<(), QuickTransferError> {
+    async fn receive_tcp(
+        &mut self,
+        message_buffer: &mut [u8],
+        wait: bool,
+    ) -> Result<(), QuickTransferError> {
         if wait {
             // Read first byte:
             self.stream
-            .read_exact(&mut message_buffer[0..1])
-            .await
-            .map_err(|err| {
-                if let ErrorKind::UnexpectedEof = err.kind() {
-                    return QuickTransferError::RemoteClosedConnection(self.role);
-                }
+                .read_exact(&mut message_buffer[0..1])
+                .await
+                .map_err(|err| {
+                    if let ErrorKind::UnexpectedEof = err.kind() {
+                        return QuickTransferError::RemoteClosedConnection(self.role);
+                    }
 
-                QuickTransferError::MessageReceive(self.role)
-            })?;
+                    QuickTransferError::MessageReceive(self.role)
+                })?;
         }
 
         let status = if wait {
@@ -38,7 +42,7 @@ impl CommunicationAgent<'_> {
         } else {
             self.stream.read_exact(message_buffer)
         };
-        
+
         match timeout(Duration::from_secs(self.timeout.into()), status).await {
             Err(_) => {
                 return Err(QuickTransferError::MessageReceiveTimeout(self.role));
@@ -58,7 +62,10 @@ impl CommunicationAgent<'_> {
     }
 
     /// Receives the message header (takes 8 bytes).
-    pub async fn receive_message_header(&mut self, wait: bool) -> Result<String, QuickTransferError> {
+    pub async fn receive_message_header(
+        &mut self,
+        wait: bool,
+    ) -> Result<String, QuickTransferError> {
         let mut buffer = [0_u8; HEADER_NAME_LENGTH];
 
         self.receive_tcp(&mut buffer, wait).await?;
@@ -143,7 +150,8 @@ impl CommunicationAgent<'_> {
             );
             let now_receive_bytes: usize = now_receive_bytes_u64.try_into().unwrap();
 
-            self.receive_tcp(&mut buffer[..now_receive_bytes], false).await?;
+            self.receive_tcp(&mut buffer[..now_receive_bytes], false)
+                .await?;
             if !just_receive {
                 let file_write_result = file.write_all(&buffer[..now_receive_bytes]);
                 if file_write_result.is_err() {
